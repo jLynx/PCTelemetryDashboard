@@ -1,0 +1,37 @@
+# PC Telemetry Dashboard
+
+Local Windows dashboard for logging PC temperatures, fan control percent, fan RPM, load, power, and other numeric hardware sensors.
+
+## Run
+
+Open PowerShell in this folder and run:
+
+```powershell
+.\run-dashboard.ps1
+```
+
+Then open:
+
+```text
+http://localhost:5127
+```
+
+For the best sensor coverage, run PowerShell as Administrator. The dashboard can read FanControl's live sensor IPC when it runs at the same elevation as FanControl. If FanControl is elevated and this dashboard is not, Windows denies the sensor pipe and only the local fallback sensors will show.
+
+The included `run-dashboard.ps1` script restarts itself as Administrator so motherboard sensors and FanControl's own sensor names/values are available.
+
+FanControl V271 may report `ReadSensorValues` as unimplemented over IPC. The dashboard handles that by using the values returned from `GetAllSensors`.
+
+## Sharing logs
+
+The dashboard writes CSV logs to:
+
+```text
+logs\
+```
+
+CSV logging is limited to the focused dashboard sensors, including temperatures, load %, power W, and the main case/radiator fan outputs. Optional fan cards such as CPU Pump and GPU fans are hidden by default and are not written to the CSV log.
+
+Use **New log** to rotate to a fresh timestamped CSV and clear the chart history. Use **Reset log** to clear the active CSV and start the current log again.
+
+Use the dashboard's **Download CSV** button to export all available telemetry logs into one file.

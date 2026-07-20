@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.7-pre708" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="FanControl.IPC">
+      <HintPath>vendor\FanControl\FanControl.IPC.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Google.Protobuf">
+      <HintPath>vendor\FanControl\Google.Protobuf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Grpc.Core.Api">
+      <HintPath>vendor\FanControl\Grpc.Core.Api.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="GrpcDotNetNamedPipes">
+      <HintPath>vendor\FanControl\GrpcDotNetNamedPipes.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
