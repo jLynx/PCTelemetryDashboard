@@ -486,6 +486,12 @@
         <span class="status-pill"><span id="status-dot" class="status-dot"></span><span id="status-text">Starting</span></span>
         <button id="new-log" type="button">New log</button>
         <button id="reset-log" class="danger" type="button">Reset log</button>
+        <button id="pause-csv" type="button">Pause CSV</button>
+        <select id="log-select" aria-label="Previous CSV logs">
+          <option value="">Open previous log...</option>
+        </select>
+        <button id="open-log" type="button" disabled>Open read-only</button>
+        <button id="live-mode" type="button" hidden>Live mode</button>
         <button id="copy-summary" type="button">Copy summary</button>
         <a class="button-link" href="/api/export">Download CSV</a>
       </div>
@@ -533,7 +539,7 @@
               <option value="180">3 hours</option>
               <option value="360">6 hours</option>
             </select>
-            <button id="pause-refresh" type="button">Pause</button>
+            <button id="pause-refresh" type="button">Pause view</button>
           </div>
         </div>
         <div class="chart-wrap">
@@ -617,6 +623,8 @@
       selected: new Set(temperatureConfig.map(item => item.key)),
       showOptionalFans: false,
       paused: false,
+      readOnlyLog: null,
+      logFiles: [],
       latest: [],
       status: null,
       seriesById: new Map()
@@ -642,9 +650,13 @@
       notice: document.getElementById("notice"),
       rangeSelect: document.getElementById("range-select"),
       pause: document.getElementById("pause-refresh"),
+      pauseCsv: document.getElementById("pause-csv"),
       copySummary: document.getElementById("copy-summary"),
       newLog: document.getElementById("new-log"),
       resetLog: document.getElementById("reset-log"),
+      logSelect: document.getElementById("log-select"),
+      openLog: document.getElementById("open-log"),
+      liveMode: document.getElementById("live-mode"),
       chart: document.getElementById("trend-chart"),
       legend: document.getElementById("legend"),
       table: document.getElementById("sensor-table"),
@@ -692,10 +704,15 @@
 
     elements.pause.addEventListener("click", () => {
       state.paused = !state.paused;
-      elements.pause.textContent = state.paused ? "Resume" : "Pause";
+      elements.pause.textContent = state.paused ? "Resume view" : "Pause view";
       if (!state.paused) {
         refresh();
       }
+    });
+
+    elements.pauseCsv.addEventListener("click", () => {
+      const isPaused = Boolean(state.status?.isCsvLoggingPaused);
+      runLogAction(elements.pauseCsv, isPaused ? "/api/log/resume" : "/api/log/pause", isPaused ? "Resume CSV" : "Pause CSV");
     });
 
     elements.newLog.addEventListener("click", () => {
@@ -708,6 +725,31 @@
       }
 
       runLogAction(elements.resetLog, "/api/log/reset", "Reset log");
+    });
+
+    elements.logSelect.addEventListener("change", () => {
+      updateModeControls();
+    });
+
+    elements.openLog.addEventListener("click", async () => {
+      const fileName = elements.logSelect.value;
+      if (!fileName) {
+        return;
+      }
+
+      state.readOnlyLog = fileName;
+      state.paused = false;
+      elements.pause.textContent = "Pause view";
+      await refresh(true);
+      showNotice(`Opened ${fileName} in read-only mode.`);
+    });
+
+    elements.liveMode.addEventListener("click", async () => {
+      state.readOnlyLog = null;
+      state.seriesById = new Map();
+      updateModeControls();
+      await refresh(true);
+      showNotice("Returned to live telemetry.");
     });
 
     elements.copySummary.addEventListener("click", async () => {
@@ -724,6 +766,11 @@
     window.addEventListener("resize", () => renderChart());
 
     async function refresh(force = false) {
+      if (state.readOnlyLog) {
+        await refreshReadOnly();
+        return;
+      }
+
       if (state.paused && !force) {
         return;
       }
@@ -749,10 +796,44 @@
         renderCards();
         renderTable();
         renderChart();
+        updateModeControls();
       } catch (error) {
         showNotice(`Dashboard refresh failed: ${error.message}`);
         elements.statusDot.className = "status-dot bad";
         elements.statusText.textContent = "Refresh failed";
+      }
+    }
+
+    async function refreshReadOnly() {
+      try {
+        const data = await fetchJson(`/api/logs/${encodeURIComponent(state.readOnlyLog)}/data?minutes=${state.minutes}`);
+        state.latest = data.readings || [];
+        state.seriesById = new Map((data.series || []).map(item => [item.sensorId, item]));
+        state.status = {
+          isReadOnly: true,
+          latestReadingCount: data.latestReadingCount || 0,
+          historyReadingCount: data.historyReadingCount || 0,
+          latestTimestampUtc: data.latestTimestampUtc,
+          activeLogFileName: data.fileName,
+          activeLogPath: data.filePath,
+          pollIntervalSeconds: 0,
+          logIntervalSeconds: 0,
+          isCsvLoggingPaused: true,
+          lastError: null,
+          note: null
+        };
+
+        renderCards();
+        renderTable();
+        renderChart();
+        updateStatus();
+        updateModeControls();
+      } catch (error) {
+        const failedLog = state.readOnlyLog;
+        state.readOnlyLog = null;
+        updateModeControls();
+        await refresh(true);
+        showNotice(`Could not open ${failedLog}: ${error.message}`);
       }
     }
 
@@ -780,6 +861,7 @@
       try {
         const result = await postJson(url);
         state.seriesById = new Map();
+        await refreshLogFiles();
         await refresh(true);
         showNotice(`${result.message} Active log: ${result.activeLogFileName}`);
       } catch (error) {
@@ -787,28 +869,81 @@
       } finally {
         button.disabled = false;
         button.textContent = originalText;
+        updateModeControls();
       }
+    }
+
+    async function refreshLogFiles() {
+      try {
+        const data = await fetchJson("/api/logs");
+        state.logFiles = data.logs || [];
+        renderLogOptions();
+        updateModeControls();
+      } catch (error) {
+        state.logFiles = [];
+        renderLogOptions();
+        showNotice(`Could not load previous logs: ${error.message}`);
+      }
+    }
+
+    function renderLogOptions() {
+      const selected = elements.logSelect.value || state.readOnlyLog || "";
+      elements.logSelect.replaceChildren(new Option("Open previous log...", ""));
+
+      state.logFiles.forEach(log => {
+        const active = log.isActive ? " (active)" : "";
+        const option = new Option(`${log.fileName}${active} - ${formatBytes(log.sizeBytes)}`, log.fileName);
+        elements.logSelect.appendChild(option);
+      });
+
+      if (selected && state.logFiles.some(log => log.fileName === selected)) {
+        elements.logSelect.value = selected;
+      }
+    }
+
+    function updateModeControls() {
+      const readOnly = Boolean(state.readOnlyLog);
+      elements.newLog.disabled = readOnly;
+      elements.resetLog.disabled = readOnly;
+      elements.pauseCsv.disabled = readOnly;
+      elements.pause.disabled = readOnly;
+      elements.liveMode.hidden = !readOnly;
+      elements.openLog.disabled = !elements.logSelect.value || elements.logSelect.value === state.readOnlyLog;
+      elements.pauseCsv.textContent = !readOnly && state.status?.isCsvLoggingPaused ? "Resume CSV" : "Pause CSV";
     }
 
     function updateStatus() {
       const status = state.status || {};
+      const readOnly = Boolean(state.readOnlyLog);
       elements.statusDot.className = `status-dot ${status.lastError ? "bad" : status.latestReadingCount > 0 ? "good" : ""}`;
-      elements.statusText.textContent = status.lastError ? "Sensor error" : status.latestReadingCount > 0 ? "Logging" : "Starting";
+      elements.statusText.textContent = readOnly
+        ? "Read only"
+        : status.lastError
+          ? "Sensor error"
+          : status.latestReadingCount > 0
+            ? status.isCsvLoggingPaused ? "CSV paused" : "Logging"
+            : "Starting";
       elements.sensorCount.textContent = `${getVisibleItems().filter(item => item.sensor).length} focused readings`;
-      elements.logPath.textContent = status.activeLogFileName ? `Log: ${status.activeLogFileName}` : status.logDirectory ? `Logs: ${status.logDirectory}` : "";
+      elements.logPath.textContent = readOnly
+        ? `Read-only: ${status.activeLogFileName || state.readOnlyLog}`
+        : status.activeLogFileName ? `Log: ${status.activeLogFileName}` : status.logDirectory ? `Logs: ${status.logDirectory}` : "";
       elements.logPath.title = status.activeLogPath || status.logDirectory || "";
 
       if (status.latestTimestampUtc) {
-        const liveEvery = formatInterval(status.pollIntervalSeconds);
-        const logEvery = formatInterval(status.logIntervalSeconds || 5);
-        elements.lastSample.textContent = `Live ${liveEvery} - logs ${logEvery} - last ${formatTime(status.latestTimestampUtc)}`;
+        if (readOnly) {
+          elements.lastSample.textContent = `${status.historyReadingCount || 0} rows - latest ${formatTime(status.latestTimestampUtc)}`;
+        } else {
+          const liveEvery = formatInterval(status.pollIntervalSeconds);
+          const logEvery = status.isCsvLoggingPaused ? "paused" : formatInterval(status.logIntervalSeconds || 5);
+          elements.lastSample.textContent = `Live ${liveEvery} - CSV ${logEvery} - last ${formatTime(status.latestTimestampUtc)}`;
+        }
       } else {
-        elements.lastSample.textContent = "Waiting for first sample";
+        elements.lastSample.textContent = readOnly ? "Read-only log has no rows" : "Waiting for first sample";
       }
 
-      if (status.lastError || status.note) {
+      if (!readOnly && (status.lastError || status.note)) {
         showNotice(status.lastError || status.note);
-      } else {
+      } else if (!readOnly) {
         hideNotice();
       }
     }
@@ -1251,6 +1386,19 @@
       return value === 1 ? "1s" : `${value}s`;
     }
 
+    function formatBytes(value) {
+      if (!Number.isFinite(value)) {
+        return "0 B";
+      }
+      if (value < 1024) {
+        return `${value} B`;
+      }
+      if (value < 1024 * 1024) {
+        return `${(value / 1024).toFixed(1)} KB`;
+      }
+      return `${(value / 1024 / 1024).toFixed(1)} MB`;
+    }
+
     function round(value) {
       return Math.round(value * 10) / 10;
     }
@@ -1268,8 +1416,13 @@
       return escapeHtml(value).replaceAll("`", "&#096;");
     }
 
+    refreshLogFiles();
     refresh();
-    setInterval(refresh, 1000);
+    setInterval(() => {
+      if (!state.readOnlyLog) {
+        refresh();
+      }
+    }, 1000);
   </script>
 </body>
 </html>

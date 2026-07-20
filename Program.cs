@@ -41,6 +41,104 @@ app.MapPost("/api/log/reset", (TelemetryStore store) =>
     }
 });
 
+app.MapPost("/api/log/pause", (TelemetryStore store) => Results.Ok(store.SetCsvLoggingPaused(true)));
+
+app.MapPost("/api/log/resume", (TelemetryStore store) => Results.Ok(store.SetCsvLoggingPaused(false)));
+
+app.MapGet("/api/logs", (TelemetryStore store, IHostEnvironment environment) =>
+{
+    var logDirectory = EnsureLogDirectory(store, environment);
+    var activeLogFileName = store.GetActiveLogFileName();
+
+    var logs = Directory.Exists(logDirectory)
+        ? Directory.GetFiles(logDirectory, "telemetry-*.csv")
+            .Select(path =>
+            {
+                var info = new FileInfo(path);
+                return new LogFileSummary(
+                    info.Name,
+                    info.FullName,
+                    info.Length,
+                    info.LastWriteTimeUtc,
+                    string.Equals(info.Name, activeLogFileName, StringComparison.OrdinalIgnoreCase));
+            })
+            .OrderByDescending(log => log.LastWriteTimeUtc)
+            .ThenBy(log => log.FileName, StringComparer.OrdinalIgnoreCase)
+            .ToList()
+        : [];
+
+    return new LogListResponse(DateTimeOffset.UtcNow, logDirectory, logs);
+});
+
+app.MapGet("/api/logs/{fileName}/data", (TelemetryStore store, IHostEnvironment environment, string fileName, int? minutes, string? type, string? sensorIds) =>
+{
+    try
+    {
+        var logDirectory = EnsureLogDirectory(store, environment);
+        var logFilePath = ResolveLogFilePath(logDirectory, fileName);
+        var readings = ReadCsvLog(logFilePath);
+        var windowMinutes = Math.Clamp(minutes ?? 30, 1, 360);
+        var requestedTypes = ParseCsv(type);
+        var requestedSensorIds = ParseCsv(sensorIds);
+        DateTimeOffset? latestTimestampUtc = readings.Count == 0 ? null : readings.Max(reading => reading.TimestampUtc);
+        var cutoff = latestTimestampUtc?.AddMinutes(-windowMinutes) ?? DateTimeOffset.MinValue;
+
+        var latestReadings = readings
+            .GroupBy(reading => reading.SensorId)
+            .Select(group => group.OrderByDescending(reading => reading.TimestampUtc).First())
+            .OrderBy(reading => TypeRank(reading.SensorType))
+            .ThenBy(reading => reading.Hardware, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(reading => reading.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var series = readings
+            .Where(reading => reading.TimestampUtc >= cutoff)
+            .Where(reading => requestedTypes.Count == 0 || requestedTypes.Contains(reading.SensorType))
+            .Where(reading => requestedSensorIds.Count == 0 || requestedSensorIds.Contains(reading.SensorId))
+            .GroupBy(reading => reading.SensorId)
+            .Select(group =>
+            {
+                var ordered = group.OrderBy(reading => reading.TimestampUtc).ToList();
+                var first = ordered[0];
+                return new SensorSeries(
+                    first.SensorId,
+                    first.Hardware,
+                    first.HardwareType,
+                    first.Name,
+                    first.SensorType,
+                    first.Unit,
+                    Downsample(ordered, 420));
+            })
+            .OrderBy(item => TypeRank(item.SensorType))
+            .ThenBy(item => item.Hardware, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Results.Ok(new LogFileDataResponse(
+            DateTimeOffset.UtcNow,
+            fileName,
+            logFilePath,
+            windowMinutes,
+            latestTimestampUtc,
+            latestReadings.Count,
+            readings.Count,
+            latestReadings,
+            series));
+    }
+    catch (FileNotFoundException)
+    {
+        return Results.NotFound($"Log file '{fileName}' was not found.");
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(ex.Message);
+    }
+    catch (IOException ex)
+    {
+        return Results.Problem($"Could not read log file '{fileName}': {ex.Message}");
+    }
+});
+
 app.MapGet("/api/series", (TelemetryStore store, int? minutes, string? type, string? sensorIds) =>
 {
     var windowMinutes = Math.Clamp(minutes ?? 30, 1, 360);
@@ -136,6 +234,150 @@ static HashSet<string> ParseCsv(string? value)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 }
 
+static string EnsureLogDirectory(TelemetryStore store, IHostEnvironment environment)
+{
+    if (string.IsNullOrWhiteSpace(store.LogDirectory))
+    {
+        store.LogDirectory = Path.Combine(environment.ContentRootPath, "logs");
+    }
+
+    Directory.CreateDirectory(store.LogDirectory);
+    return store.LogDirectory;
+}
+
+static string ResolveLogFilePath(string logDirectory, string fileName)
+{
+    if (string.IsNullOrWhiteSpace(fileName)
+        || !string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal)
+        || !fileName.StartsWith("telemetry-", StringComparison.OrdinalIgnoreCase)
+        || !fileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException("Invalid telemetry log file name.");
+    }
+
+    var fullDirectory = Path.GetFullPath(logDirectory);
+    var fullPath = Path.GetFullPath(Path.Combine(fullDirectory, fileName));
+    var directoryPrefix = fullDirectory.EndsWith(Path.DirectorySeparatorChar)
+        ? fullDirectory
+        : fullDirectory + Path.DirectorySeparatorChar;
+
+    if (!fullPath.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException("Invalid telemetry log file path.");
+    }
+
+    if (!File.Exists(fullPath))
+    {
+        throw new FileNotFoundException("Telemetry log was not found.", fullPath);
+    }
+
+    return fullPath;
+}
+
+static IReadOnlyList<SensorReading> ReadCsvLog(string filePath)
+{
+    var readings = new List<SensorReading>();
+
+    using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+
+    string? line;
+    while ((line = reader.ReadLine()) is not null)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            continue;
+        }
+
+        if (line.StartsWith("timestamp_local,", StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        var columns = ParseCsvLine(line);
+        if (columns.Count < 9)
+        {
+            continue;
+        }
+
+        if (!DateTimeOffset.TryParse(
+                columns[1],
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out var timestampUtc))
+        {
+            continue;
+        }
+
+        if (!double.TryParse(columns[7], NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            continue;
+        }
+
+        readings.Add(new SensorReading(
+            timestampUtc,
+            columns[2],
+            columns[4],
+            columns[3],
+            columns[5],
+            columns[6],
+            value,
+            columns[8]));
+    }
+
+    return readings;
+}
+
+static IReadOnlyList<string> ParseCsvLine(string line)
+{
+    var values = new List<string>();
+    var field = new StringBuilder();
+    var inQuotes = false;
+
+    for (var index = 0; index < line.Length; index++)
+    {
+        var character = line[index];
+        if (inQuotes)
+        {
+            if (character == '"')
+            {
+                if (index + 1 < line.Length && line[index + 1] == '"')
+                {
+                    field.Append('"');
+                    index++;
+                }
+                else
+                {
+                    inQuotes = false;
+                }
+            }
+            else
+            {
+                field.Append(character);
+            }
+
+            continue;
+        }
+
+        if (character == '"')
+        {
+            inQuotes = true;
+        }
+        else if (character == ',')
+        {
+            values.Add(field.ToString());
+            field.Clear();
+        }
+        else
+        {
+            field.Append(character);
+        }
+    }
+
+    values.Add(field.ToString());
+    return values;
+}
+
 static IReadOnlyList<SeriesPoint> Downsample(IReadOnlyList<SensorReading> readings, int maxPoints)
 {
     if (readings.Count <= maxPoints)
@@ -199,6 +441,29 @@ public sealed record SeriesResponse(
     int WindowMinutes,
     IReadOnlyList<SensorSeries> Series);
 
+public sealed record LogFileSummary(
+    string FileName,
+    string FilePath,
+    long SizeBytes,
+    DateTimeOffset LastWriteTimeUtc,
+    bool IsActive);
+
+public sealed record LogListResponse(
+    DateTimeOffset GeneratedUtc,
+    string LogDirectory,
+    IReadOnlyList<LogFileSummary> Logs);
+
+public sealed record LogFileDataResponse(
+    DateTimeOffset GeneratedUtc,
+    string FileName,
+    string FilePath,
+    int WindowMinutes,
+    DateTimeOffset? LatestTimestampUtc,
+    int LatestReadingCount,
+    int HistoryReadingCount,
+    IReadOnlyList<SensorReading> Readings,
+    IReadOnlyList<SensorSeries> Series);
+
 public sealed record TelemetryStatus(
     bool IsRunning,
     int LatestReadingCount,
@@ -209,6 +474,7 @@ public sealed record TelemetryStatus(
     string ActiveLogPath,
     double PollIntervalSeconds,
     double LogIntervalSeconds,
+    bool IsCsvLoggingPaused,
     string? LastError,
     string? Note);
 
@@ -216,6 +482,7 @@ public sealed record LogActionResult(
     DateTimeOffset TimestampUtc,
     string ActiveLogFileName,
     string ActiveLogPath,
+    bool IsCsvLoggingPaused,
     string Message);
 
 public sealed class TelemetryStore
@@ -228,6 +495,7 @@ public sealed class TelemetryStore
     private IReadOnlyList<SensorReading> _latest = [];
     private string _activeLogFileName = "";
     private bool _forceNextLogWrite;
+    private bool _isCsvLoggingPaused;
     private string? _lastError;
     private string? _note = "Waiting for first hardware sample.";
 
@@ -277,7 +545,9 @@ public sealed class TelemetryStore
             _activeLogFileName = CreateUniqueLogFileNameUnlocked();
             _history.Clear();
             _forceNextLogWrite = true;
-            _note = $"Started new log {_activeLogFileName}. The next sample will be written immediately.";
+            _note = _isCsvLoggingPaused
+                ? $"Started new log {_activeLogFileName}. CSV logging is paused."
+                : $"Started new log {_activeLogFileName}. The next sample will be written immediately.";
 
             return CreateLogActionResultUnlocked("Started a new log and cleared the chart history.");
         }
@@ -293,7 +563,9 @@ public sealed class TelemetryStore
             activeLogPath = GetActiveLogPathUnlocked();
             _history.Clear();
             _forceNextLogWrite = true;
-            _note = $"Reset current log {_activeLogFileName}. The next sample will be written immediately.";
+            _note = _isCsvLoggingPaused
+                ? $"Reset current log {_activeLogFileName}. CSV logging is paused."
+                : $"Reset current log {_activeLogFileName}. The next sample will be written immediately.";
             result = CreateLogActionResultUnlocked("Reset the current log and cleared the chart history.");
         }
 
@@ -308,11 +580,44 @@ public sealed class TelemetryStore
         return result;
     }
 
-    public bool ConsumeForceLogWrite()
+    public LogActionResult SetCsvLoggingPaused(bool isPaused)
     {
         lock (_gate)
         {
-            if (!_forceNextLogWrite)
+            EnsureActiveLogUnlocked();
+
+            if (_isCsvLoggingPaused == isPaused)
+            {
+                _note = isPaused
+                    ? "CSV logging is already paused. Live telemetry is still updating."
+                    : $"CSV logging is already writing to {_activeLogFileName}.";
+
+                return CreateLogActionResultUnlocked(_note);
+            }
+
+            _isCsvLoggingPaused = isPaused;
+            if (isPaused)
+            {
+                _note = "CSV logging is paused. Live telemetry is still updating.";
+                return CreateLogActionResultUnlocked("CSV logging paused.");
+            }
+
+            _forceNextLogWrite = true;
+            _note = $"CSV logging resumed for {_activeLogFileName}. The next sample will be written immediately.";
+            return CreateLogActionResultUnlocked("CSV logging resumed.");
+        }
+    }
+
+    public bool ShouldWriteCsvSnapshot(DateTimeOffset timestampUtc, DateTimeOffset lastCsvWriteUtc)
+    {
+        lock (_gate)
+        {
+            if (_isCsvLoggingPaused)
+            {
+                return false;
+            }
+
+            if (!_forceNextLogWrite && timestampUtc - lastCsvWriteUtc < LogInterval)
             {
                 return false;
             }
@@ -328,6 +633,15 @@ public sealed class TelemetryStore
         {
             EnsureActiveLogUnlocked();
             return GetActiveLogPathUnlocked();
+        }
+    }
+
+    public string GetActiveLogFileName()
+    {
+        lock (_gate)
+        {
+            EnsureActiveLogUnlocked();
+            return _activeLogFileName;
         }
     }
 
@@ -380,6 +694,7 @@ public sealed class TelemetryStore
                 ActiveLogPath: GetActiveLogPathUnlocked(),
                 PollIntervalSeconds: PollInterval.TotalSeconds,
                 LogIntervalSeconds: LogInterval.TotalSeconds,
+                IsCsvLoggingPaused: _isCsvLoggingPaused,
                 LastError: _lastError,
                 Note: _note);
         }
@@ -417,6 +732,7 @@ public sealed class TelemetryStore
         TimestampUtc: DateTimeOffset.UtcNow,
         ActiveLogFileName: _activeLogFileName,
         ActiveLogPath: GetActiveLogPathUnlocked(),
+        IsCsvLoggingPaused: _isCsvLoggingPaused,
         Message: message);
 }
 
@@ -485,10 +801,11 @@ public sealed class HardwareTelemetryWorker(
                         : $"FanControl sensor source unavailable: {_fanControlLastError}");
                 }
 
-                if (store.ConsumeForceLogWrite() || DateTimeOffset.UtcNow - _lastCsvWriteUtc >= store.LogInterval)
+                var sampleCompletedUtc = DateTimeOffset.UtcNow;
+                if (store.ShouldWriteCsvSnapshot(sampleCompletedUtc, _lastCsvWriteUtc))
                 {
                     await WriteCsvSnapshot(snapshot, stoppingToken);
-                    _lastCsvWriteUtc = DateTimeOffset.UtcNow;
+                    _lastCsvWriteUtc = sampleCompletedUtc;
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

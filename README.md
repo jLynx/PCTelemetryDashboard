@@ -34,4 +34,8 @@ CSV logging is limited to the focused dashboard sensors, including temperatures,
 
 Use **New log** to rotate to a fresh timestamped CSV and clear the chart history. Use **Reset log** to clear the active CSV and start the current log again.
 
+Use **Pause CSV** to stop writing new samples to disk while keeping live telemetry and charts running. Use **Resume CSV** to start writing again; the next focused sample is written immediately.
+
+Use the previous-log selector and **Open read-only** to inspect an existing CSV without changing it. While a previous log is open, live log controls are disabled in the dashboard view. Use **Live mode** to return to current telemetry.
+
 Use the dashboard's **Download CSV** button to export all available telemetry logs into one file.
