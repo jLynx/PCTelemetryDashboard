@@ -500,7 +500,10 @@
     <div id="notice" class="notice"></div>
 
     <section class="group" aria-label="Temperature sources">
-      <h2>Temperatures</h2>
+      <div class="group-head">
+        <h2>Temperatures</h2>
+        <button id="toggle-optional-temperatures" type="button">Show optional temperatures</button>
+      </div>
       <div id="temperature-grid" class="card-grid"></div>
     </section>
 
@@ -581,11 +584,11 @@
   <script>
     const temperatureConfig = [
       { key: "cpu-core", label: "Core (Tctl/Tdie)", hardware: "AMD Ryzen 9 9950X", names: ["Core (Tctl/Tdie)", "CPU Package", "Package"] },
-      { key: "ccd1", label: "CCD1 (Tdie)", hardware: "AMD Ryzen 9 9950X", names: ["CCD1 (Tdie)", "CCD1"] },
-      { key: "ccd2", label: "CCD2 (Tdie)", hardware: "AMD Ryzen 9 9950X", names: ["CCD2 (Tdie)", "CCD2"] },
-      { key: "ccds-max", label: "CCDs Max (Tdie)", hardware: "AMD Ryzen 9 9950X", names: ["CCDs Max (Tdie)", "CCD Max"] },
-      { key: "ccds-average", label: "CCDs Average (Tdie)", hardware: "AMD Ryzen 9 9950X", names: ["CCDs Average (Tdie)", "CCD Average"] },
-      { key: "igpu-soc", label: "GPU VR SoC", hardware: "AMD Radeon(TM) Graphics", names: ["GPU VR SoC"] },
+      { key: "ccd1", label: "CCD1 (Tdie)", hardware: "AMD Ryzen 9 9950X", hidden: true, names: ["CCD1 (Tdie)", "CCD1"] },
+      { key: "ccd2", label: "CCD2 (Tdie)", hardware: "AMD Ryzen 9 9950X", hidden: true, names: ["CCD2 (Tdie)", "CCD2"] },
+      { key: "ccds-max", label: "CCDs Max (Tdie)", hardware: "AMD Ryzen 9 9950X", hidden: true, names: ["CCDs Max (Tdie)", "CCD Max"] },
+      { key: "ccds-average", label: "CCDs Average (Tdie)", hardware: "AMD Ryzen 9 9950X", hidden: true, names: ["CCDs Average (Tdie)", "CCD Average"] },
+      { key: "igpu-soc", label: "GPU VR SoC", hardware: "AMD Radeon(TM) Graphics", hidden: true, names: ["GPU VR SoC"] },
       { key: "system-1", label: "System #1", hardware: "Gigabyte X870 AORUS ELITE WIFI7", names: ["System #1", "System 1", "Temperature #1"] },
       { key: "pch", label: "PCH", hardware: "Gigabyte X870 AORUS ELITE WIFI7", names: ["PCH"] },
       { key: "cpu-board", label: "CPU", hardware: "Gigabyte X870 AORUS ELITE WIFI7", names: ["CPU"] },
@@ -620,7 +623,8 @@
     const state = {
       view: "temperature",
       minutes: 30,
-      selected: new Set(temperatureConfig.map(item => item.key)),
+      selected: new Set(temperatureConfig.filter(item => !item.hidden).map(item => item.key)),
+      showOptionalTemperatures: false,
       showOptionalFans: false,
       paused: false,
       readOnlyLog: null,
@@ -664,6 +668,7 @@
       logPath: document.getElementById("log-path"),
       chartHeading: document.getElementById("chart-heading"),
       chartCaption: document.getElementById("chart-caption"),
+      optionalTemperatures: document.getElementById("toggle-optional-temperatures"),
       optionalFans: document.getElementById("toggle-optional-fans")
     };
 
@@ -673,7 +678,7 @@
         state.view = button.dataset.view;
         state.selected.clear();
         if (state.view === "temperature") {
-          temperatureConfig.forEach(item => state.selected.add(item.key));
+          getTemperatureConfigs().forEach(item => state.selected.add(item.key));
         } else if (state.view === "loadPercent" || state.view === "power") {
           performanceConfig
             .filter(item => item.chartView === state.view)
@@ -683,6 +688,18 @@
         }
         refresh();
       });
+    });
+
+    elements.optionalTemperatures.addEventListener("click", () => {
+      state.showOptionalTemperatures = !state.showOptionalTemperatures;
+
+      if (state.showOptionalTemperatures && state.view === "temperature") {
+        getTemperatureConfigs().forEach(item => state.selected.add(item.key));
+      } else {
+        temperatureConfig.filter(item => item.hidden).forEach(item => state.selected.delete(item.key));
+      }
+
+      refresh();
     });
 
     elements.optionalFans.addEventListener("click", () => {
@@ -949,10 +966,11 @@
     }
 
     function renderCards() {
-      const temperatureItems = temperatureConfig.map(config => makeTemperatureItem(config));
+      const temperatureItems = getTemperatureConfigs().map(config => makeTemperatureItem(config));
       const performanceItems = performanceConfig.map(config => makePerformanceItem(config));
       const fanItems = getFanConfigs().map(config => makeFanItem(config));
 
+      elements.optionalTemperatures.textContent = state.showOptionalTemperatures ? "Hide optional temperatures" : "Show optional temperatures";
       elements.optionalFans.textContent = state.showOptionalFans ? "Hide optional fans" : "Show optional fans";
 
       elements.temperatureGrid.innerHTML = temperatureItems.map(item => renderTemperatureCard(item)).join("");
@@ -1196,7 +1214,7 @@
     }
 
     function getVisibleItems() {
-      const temperatureItems = temperatureConfig.map(config => makeTemperatureItem(config));
+      const temperatureItems = getTemperatureConfigs().map(config => makeTemperatureItem(config));
       const performanceItems = performanceConfig.map(config => makePerformanceItem(config));
       const fanItems = getFanConfigs().flatMap(config => {
         const item = makeFanItem(config);
@@ -1219,7 +1237,7 @@
 
     function getChartItems() {
       if (state.view === "temperature") {
-        return temperatureConfig
+        return getTemperatureConfigs()
           .map(config => makeTemperatureItem(config))
           .filter(item => state.selected.has(item.key));
       }
@@ -1237,6 +1255,10 @@
         .map(config => makeFanItem(config))
         .filter(item => state.selected.has(item.key))
         .map(item => ({ key: item.key, label: item.label, hardware: item.hardware, sensor: item[valueKey] }));
+    }
+
+    function getTemperatureConfigs() {
+      return temperatureConfig.filter(item => state.showOptionalTemperatures || !item.hidden);
     }
 
     function getFanConfigs() {

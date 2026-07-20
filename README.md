@@ -35,6 +35,8 @@ logs\
 
 CSV logging is limited to the focused dashboard sensors, including temperatures, load %, power W, and the main case/radiator fan outputs. Optional fan cards such as CPU Pump and GPU fans are hidden by default and are not written to the CSV log.
 
+Optional temperature cards such as CCD temperatures and GPU VR SoC are also hidden by default and skipped by new CSV log rows. Use **Show optional temperatures** to inspect them in the dashboard when needed.
+
 Use **New log** to rotate to a fresh timestamped CSV and clear the chart history. Use **Reset log** to clear the active CSV and start the current log again.
 
 Use **Pause CSV** to stop writing new samples to disk while keeping live telemetry and charts running. Use **Resume CSV** to start writing again; the next focused sample is written immediately.

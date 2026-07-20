@@ -746,11 +746,6 @@ public sealed class HardwareTelemetryWorker(
     private static readonly IReadOnlyList<FocusedLogSensor> FocusedLogSensors =
     [
         new("Core (Tctl/Tdie)", "AMD Ryzen 9 9950X", "Temperature", ["Core (Tctl/Tdie)", "CPU Package", "Package"]),
-        new("CCD1 (Tdie)", "AMD Ryzen 9 9950X", "Temperature", ["CCD1 (Tdie)", "CCD1"]),
-        new("CCD2 (Tdie)", "AMD Ryzen 9 9950X", "Temperature", ["CCD2 (Tdie)", "CCD2"]),
-        new("CCDs Max (Tdie)", "AMD Ryzen 9 9950X", "Temperature", ["CCDs Max (Tdie)", "CCD Max"]),
-        new("CCDs Average (Tdie)", "AMD Ryzen 9 9950X", "Temperature", ["CCDs Average (Tdie)", "CCD Average"]),
-        new("GPU VR SoC", "AMD Radeon(TM) Graphics", "Temperature", ["GPU VR SoC"]),
         new("System #1", "Gigabyte X870 AORUS ELITE WIFI7", "Temperature", ["System #1", "System 1", "Temperature #1"]),
         new("PCH", "Gigabyte X870 AORUS ELITE WIFI7", "Temperature", ["PCH"]),
         new("CPU", "Gigabyte X870 AORUS ELITE WIFI7", "Temperature", ["CPU"]),
