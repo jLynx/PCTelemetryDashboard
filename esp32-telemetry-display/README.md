@@ -1,5 +1,7 @@
 # ESP32-S3 PC Telemetry Display
 
+<img width="1695" height="1271" alt="image" src="https://github.com/user-attachments/assets/c9a94108-d6d0-4d57-91d2-d131c3782f02" />
+
 The panel was confirmed as ST7796S using the manufacturer's initialization
 sequence. The successful direct-GPIO bring-up program is preserved at
 `backup/display_bringup.cpp.disabled`. The production firmware uses the
