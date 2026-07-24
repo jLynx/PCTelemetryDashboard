@@ -10,6 +10,7 @@ internal sealed class FanControlSensorWorker(
     private string? _gpuFallbackError;
     private readonly NvidiaNvmlReader _nvidia = new();
     private bool _gpuSourceLogged;
+    private DateTimeOffset _nextNvidiaAttemptUtc;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -129,7 +130,8 @@ internal sealed class FanControlSensorWorker(
             IsNvidiaHardware(reading)
             && string.Equals(reading.SensorType, "Power", StringComparison.OrdinalIgnoreCase));
 
-        if (needsGpuCoreLoad || needsGpuMemoryLoad || needsGpuPower)
+        if ((needsGpuCoreLoad || needsGpuMemoryLoad || needsGpuPower)
+            && timestampUtc >= _nextNvidiaAttemptUtc)
         {
             try
             {
@@ -178,6 +180,15 @@ internal sealed class FanControlSensorWorker(
                     _gpuSourceLogged = true;
                     log("Using NVIDIA NVML for live GPU load and power fallback sensors.");
                 }
+                _gpuFallbackError = null;
+                _nextNvidiaAttemptUtc = DateTimeOffset.MinValue;
+            }
+            catch (NvidiaNvmlException ex) when (ex.IsTransient)
+            {
+                // The NVIDIA driver temporarily rejects NVML calls during
+                // sleep/resume. NvidiaNvmlReader has already discarded the
+                // stale session; retry quietly once the driver has settled.
+                _nextNvidiaAttemptUtc = timestampUtc.AddSeconds(5);
                 _gpuFallbackError = null;
             }
             catch (Exception ex)

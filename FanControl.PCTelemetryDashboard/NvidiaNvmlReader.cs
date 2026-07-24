@@ -78,8 +78,7 @@ internal sealed class NvidiaNvmlReader : IDisposable
     {
         if (result != Success)
         {
-            throw new InvalidOperationException(
-                $"NVIDIA NVML operation {operation} failed with result code {result}.");
+            throw new NvidiaNvmlException(operation, result);
         }
     }
 
@@ -119,3 +118,14 @@ internal readonly record struct NvidiaMetrics(
     double LoadPercent,
     double MemoryLoadPercent,
     double PowerWatts);
+
+internal sealed class NvidiaNvmlException(string operation, int resultCode)
+    : InvalidOperationException(
+        $"NVIDIA NVML operation {operation} failed with result code {resultCode}.")
+{
+    public int ResultCode { get; } = resultCode;
+
+    // These results occur while the NVIDIA driver/GPU is unavailable during
+    // Windows sleep and resume. A new NVML session succeeds once it is ready.
+    public bool IsTransient => ResultCode is 9 or 15 or 17 or 999;
+}
