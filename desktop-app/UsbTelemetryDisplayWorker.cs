@@ -75,6 +75,8 @@ public sealed class UsbTelemetryDisplayWorker(
     private const byte ExhaustFanValid = 1 << 3;
 
     private ushort _sequence;
+    private bool _wasConnected;
+    private string? _lastError;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -102,15 +104,20 @@ public sealed class UsbTelemetryDisplayWorker(
 
                 stream.WriteTimeout = 2000;
                 var productName = SafeProductName(device);
-                logger.LogInformation(
-                    "Connected to USB telemetry display {ProductName} at {DevicePath}.",
-                    productName, device.DevicePath);
 
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     var readings = telemetry.GetLatest();
                     var report = BuildReport(readings, ++_sequence, out var validReadingCount);
                     stream.Write(report, 0, report.Length);
+                    if (!_wasConnected)
+                    {
+                        logger.LogInformation(
+                            "Connected to USB telemetry display {ProductName} at {DevicePath}.",
+                            productName, device.DevicePath);
+                    }
+                    _wasConnected = true;
+                    _lastError = null;
 
                     status.Set(new UsbDisplayStatus(
                         true,
@@ -132,15 +139,17 @@ public sealed class UsbTelemetryDisplayWorker(
             catch (Exception ex)
             {
                 var expectedDisconnect = IsDeviceDisconnected(ex);
-                if (expectedDisconnect)
+                if (_wasConnected)
                 {
                     logger.LogInformation(
-                        "USB telemetry display disconnected. Waiting for it to reconnect.");
+                        "USB telemetry display disconnected ({Reason}).", ex.Message);
                 }
-                else
+                else if (!string.Equals(_lastError, ex.Message, StringComparison.Ordinal))
                 {
                     logger.LogWarning(ex, "USB telemetry display could not be opened or written to.");
                 }
+                _wasConnected = false;
+                _lastError = ex.Message;
 
                 status.Set(new UsbDisplayStatus(
                     false,

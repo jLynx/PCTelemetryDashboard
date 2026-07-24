@@ -8,9 +8,12 @@ runs inside FanControl and provides:
 - one-second live sensor sampling through FanControl IPC;
 - live NVIDIA GPU load and power through NVIDIA NVML when FanControl does not
   expose those sensor types;
+- CPU and GPU temperature sensors published back into FanControl so the plugin
+  remains a valid sensor provider even when the USB display is disconnected;
 - up to six hours of focused in-memory graph history;
 - optional CSV logging, paused by default;
-- clean `Initialize -> Load -> Close` lifecycle handling.
+- clean `Initialize -> Load -> Close` lifecycle handling;
+- single process-wide worker ownership across FanControl refreshes.
 
 The standalone dashboard remains unchanged in the repository as a fallback.
 
@@ -79,4 +82,6 @@ standalone app without changing the ESP32 firmware or USB protocol.
 FanControl calls `IPlugin2.Update()` on its own update path. This plugin leaves
 that hook non-blocking: sensor IPC, USB writes and HTTP requests all run on
 background workers. `Close()` cancels them and releases the USB/HTTP resources
-so FanControl plugin refreshes do not accumulate duplicate workers.
+so FanControl plugin refreshes do not accumulate duplicate workers. A
+process-wide generation guard also stops the previous instance if FanControl
+constructs a replacement without first closing the old one.

@@ -55,18 +55,18 @@ internal sealed class UsbDisplayWorker(
 
                 stream.WriteTimeout = 2000;
                 var productName = SafeProductName(device);
-                if (!_wasConnected)
-                {
-                    log($"Connected to USB display {productName}.");
-                }
-                _wasConnected = true;
-                _lastError = null;
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     var report = BuildReport(
                         state.GetLatest(), ++_sequence, out var validReadingCount);
                     stream.Write(report, 0, report.Length);
+                    if (!_wasConnected)
+                    {
+                        log($"Connected to USB display {productName}.");
+                    }
+                    _wasConnected = true;
+                    _lastError = null;
                     state.SetDisplayStatus(new UsbDisplayStatus(
                         true,
                         productName,
@@ -103,7 +103,8 @@ internal sealed class UsbDisplayWorker(
     {
         if (_wasConnected)
         {
-            log("USB display disconnected; waiting for reconnection.");
+            var reason = error is null ? "unknown reason" : error.Message;
+            log($"USB display disconnected ({reason}).");
         }
         else if (error is not null && !string.Equals(_lastError, error.Message, StringComparison.Ordinal))
         {
@@ -111,7 +112,10 @@ internal sealed class UsbDisplayWorker(
         }
 
         _wasConnected = false;
-        _lastError = error?.Message;
+        if (error is not null)
+        {
+            _lastError = error.Message;
+        }
         state.SetDisplayStatus(new UsbDisplayStatus(
             false,
             device is null ? null : SafeProductName(device),

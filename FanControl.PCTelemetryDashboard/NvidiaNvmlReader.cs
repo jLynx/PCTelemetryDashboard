@@ -12,20 +12,35 @@ internal sealed class NvidiaNvmlReader : IDisposable
     {
         EnsureInitialized();
 
-        ThrowIfFailed(
-            NativeMethods.nvmlDeviceGetUtilizationRates(_device, out var utilization),
-            "nvmlDeviceGetUtilizationRates");
-        ThrowIfFailed(
-            NativeMethods.nvmlDeviceGetPowerUsage(_device, out var powerMilliwatts),
-            "nvmlDeviceGetPowerUsage");
+        try
+        {
+            ThrowIfFailed(
+                NativeMethods.nvmlDeviceGetUtilizationRates(_device, out var utilization),
+                "nvmlDeviceGetUtilizationRates");
+            ThrowIfFailed(
+                NativeMethods.nvmlDeviceGetPowerUsage(_device, out var powerMilliwatts),
+                "nvmlDeviceGetPowerUsage");
 
-        return new NvidiaMetrics(
-            Math.Clamp(utilization.Gpu, 0u, 100u),
-            Math.Clamp(utilization.Memory, 0u, 100u),
-            powerMilliwatts / 1000d);
+            return new NvidiaMetrics(
+                Math.Clamp(utilization.Gpu, 0u, 100u),
+                Math.Clamp(utilization.Memory, 0u, 100u),
+                powerMilliwatts / 1000d);
+        }
+        catch
+        {
+            // Driver handles become invalid when Windows suspends the GPU.
+            // Tear down this NVML session so the next sample reinitializes it.
+            Reset();
+            throw;
+        }
     }
 
     public void Dispose()
+    {
+        Reset();
+    }
+
+    private void Reset()
     {
         if (!_initialized)
         {

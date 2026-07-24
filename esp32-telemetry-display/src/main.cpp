@@ -2,6 +2,7 @@
 #include <Arduino_GFX_Library.h>
 #include <USB.h>
 #include <USBHIDVendor.h>
+#include <tusb.h>
 
 #include <algorithm>
 #include <cstring>
@@ -34,6 +35,8 @@ constexpr uint16_t Offline = 0xF986;
 constexpr uint32_t FrameIntervalMs = 100;
 constexpr uint32_t StatusReportIntervalMs = 1000;
 constexpr uint32_t OfflineBlankDelayMs = 10000;
+constexpr uint32_t UsbUnmountRecoveryDelayMs = 3000;
+constexpr uint32_t UsbFirstReportTimeoutMs = 10000;
 constexpr int16_t HeaderGroupLeft = 328;
 constexpr int16_t HeaderTextRight = 468;
 
@@ -133,6 +136,25 @@ uint32_t lastFrameMs = 0;
 uint32_t lastStatusReportMs = 0;
 uint32_t offlineSinceMs = 0;
 bool displayBlanked = false;
+uint32_t recoveryBootAtMs = 0;
+uint32_t usbUnmountedAtMs = 0;
+bool usbWasMounted = false;
+
+void drawStaticUi();
+void drawConnection(bool online);
+
+void restartUsb() {
+  hasTelemetry = false;
+  wasOnline = false;
+  lastReportMs = 0;
+
+  // Recreate the USB controller and endpoints instead of retaining the stalled
+  // HID OUT endpoint that Windows can leave behind after sleep.
+  hid.end();
+  tud_disconnect();
+  delay(1500);
+  ESP.restart();
+}
 
 constexpr size_t SparkPoints = 30U * 60U;
 
@@ -407,11 +429,39 @@ void setup() {
   USB.productName("PC Telemetry Display");
   USB.manufacturerName("PC Telemetry Dashboard");
   USB.begin();
+
+  recoveryBootAtMs = millis();
+  usbWasMounted = tud_mounted();
 }
 
 void loop() {
   pollHid();
   const uint32_t now = millis();
+  const bool usbMounted = tud_mounted();
+
+  // USB remains powered during PC sleep. Recover if Windows drops the mount
+  // without electrically resetting the ESP32-S3.
+  if (usbMounted) {
+    usbWasMounted = true;
+    usbUnmountedAtMs = 0;
+  } else if (usbWasMounted && usbUnmountedAtMs == 0) {
+    usbUnmountedAtMs = now;
+  }
+
+  if (usbWasMounted && !usbMounted && usbUnmountedAtMs != 0 &&
+      now - usbUnmountedAtMs >= UsbUnmountRecoveryDelayMs) {
+    restartUsb();
+  }
+
+  // Windows can report a healthy, mounted HID device and complete host writes
+  // even though no OUT report reaches TinyUSB after sleep. The only trustworthy
+  // acknowledgement is a packet parsed by pollHid(). Recover if none arrives
+  // during the startup grace period.
+  if (usbMounted && !hasTelemetry &&
+      now - recoveryBootAtMs >= UsbFirstReportTimeoutMs) {
+    restartUsb();
+  }
+
   const bool online = hasTelemetry && now - lastReportMs < TelemetryProtocol::StaleAfterMs;
 
   if (online != wasOnline) {
@@ -432,10 +482,8 @@ void loop() {
     }
   }
 
-  if (!online && !displayBlanked && now - offlineSinceMs >= OfflineBlankDelayMs) {
-    // Display-off and sleep commands make this normally-white panel turn white
-    // under its always-on backlight. Keep the controller active and drive every
-    // pixel black for the darkest state possible without a backlight switch.
+  if (!online && !displayBlanked &&
+      now - offlineSinceMs >= OfflineBlankDelayMs) {
     gfx->fillScreen(BLACK);
     displayBlanked = true;
   }

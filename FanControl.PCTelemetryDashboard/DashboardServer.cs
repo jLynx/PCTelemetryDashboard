@@ -48,15 +48,18 @@ internal sealed class DashboardServer(
                     HttpListenerContext context;
                     try
                     {
-                        context = await listener.GetContextAsync()
-                            .WaitAsync(cancellationToken)
-                            .ConfigureAwait(false);
+                        // Stop() below unblocks this operation. Await the
+                        // original task directly so a later disposal exception
+                        // cannot become an unobserved task exception.
+                        context = await listener.GetContextAsync().ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    catch (HttpListenerException) when (
+                        cancellationToken.IsCancellationRequested || !listener.IsListening)
                     {
                         break;
                     }
-                    catch (HttpListenerException) when (!listener.IsListening)
+                    catch (ObjectDisposedException) when (
+                        cancellationToken.IsCancellationRequested || !listener.IsListening)
                     {
                         break;
                     }
@@ -109,7 +112,10 @@ internal sealed class DashboardServer(
         {
             try
             {
-                _listener?.Close();
+                if (_listener?.IsListening == true)
+                {
+                    _listener.Stop();
+                }
             }
             catch
             {

@@ -74,3 +74,9 @@ in `X10` are fixed-point integers (for example, `611` means `61.1`).
 
 The display changes to **OFFLINE** if no valid report arrives for five seconds.
 No COM port, network connection, or USB driver installation is required.
+
+Because the USB port remains powered during PC sleep, the firmware watches for
+TinyUSB becoming unmounted without an electrical reset. It then detaches and
+reboots the USB controller. A mounted device that receives no first telemetry
+report within ten seconds uses the same recovery, handling the case where
+Windows reports successful HID writes that never reach the ESP32-S3.

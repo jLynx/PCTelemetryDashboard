@@ -5,9 +5,12 @@ namespace FanControl.PCTelemetryDashboard;
 public sealed class Plugin(IPluginLogger logger) : IPlugin2
 {
     private const string DashboardUrl = "http://localhost:5127";
+    private static readonly object ActivePluginGate = new();
+    private static Plugin? ActivePlugin;
     private readonly object _lifecycleGate = new();
     private CancellationTokenSource? _cancellation;
     private Task[] _workers = [];
+    private PublishedTemperatureSensor[] _publishedSensors = [];
     private DashboardServer? _server;
 
     public string Name => "PC Telemetry Dashboard";
@@ -20,6 +23,25 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2
     }
 
     public void Load(IPluginSensorsContainer container)
+    {
+        lock (ActivePluginGate)
+        {
+            if (!ReferenceEquals(ActivePlugin, this))
+            {
+                if (ActivePlugin is not null)
+                {
+                    Log("FanControl created a replacement plugin instance; stopping the previous worker generation.");
+                    ActivePlugin.StopWorkers();
+                }
+
+                ActivePlugin = this;
+            }
+
+            StartWorkers(container);
+        }
+    }
+
+    private void StartWorkers(IPluginSensorsContainer container)
     {
         lock (_lifecycleGate)
         {
@@ -35,9 +57,16 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2
                 var server = new DashboardServer(state, Log);
                 var sensorWorker = new FanControlSensorWorker(state, Log);
                 var usbWorker = new UsbDisplayWorker(state, Log);
+                var publishedSensors = CreatePublishedSensors(state);
+
+                foreach (var sensor in publishedSensors)
+                {
+                    container.TempSensors.Add(sensor);
+                }
 
                 _cancellation = cancellation;
                 _server = server;
+                _publishedSensors = publishedSensors;
                 _workers =
                 [
                     Task.Run(() => RunWorkerAsync(
@@ -56,6 +85,7 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2
                 _cancellation = null;
                 _server = null;
                 _workers = [];
+                _publishedSensors = [];
                 Log($"Plugin failed to load: {ex}");
             }
         }
@@ -63,12 +93,32 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2
 
     public void Update()
     {
-        // FanControl calls this on its own 1 Hz update path. All USB, IPC and
-        // HTTP work deliberately runs on background workers so this never blocks
-        // fan control processing.
+        PublishedTemperatureSensor[] sensors;
+        lock (_lifecycleGate)
+        {
+            sensors = _publishedSensors;
+        }
+
+        foreach (var sensor in sensors)
+        {
+            sensor.Update();
+        }
     }
 
     public void Close()
+    {
+        lock (ActivePluginGate)
+        {
+            if (ReferenceEquals(ActivePlugin, this))
+            {
+                ActivePlugin = null;
+            }
+
+            StopWorkers();
+        }
+    }
+
+    private void StopWorkers()
     {
         CancellationTokenSource? cancellation;
         Task[] workers;
@@ -81,6 +131,7 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2
             server = _server;
             _cancellation = null;
             _workers = [];
+            _publishedSensors = [];
             _server = null;
         }
 
@@ -141,5 +192,49 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2
         {
             Log($"The {workerName} worker stopped unexpectedly: {ex}");
         }
+    }
+
+    private static PublishedTemperatureSensor[] CreatePublishedSensors(
+        TelemetryState state) =>
+    [
+        new(
+            "pctelemetry-dashboard/cpu-temperature",
+            "PC Telemetry CPU Temperature",
+            () => FindTemperature(
+                state.GetLatest(),
+                reading => reading.Hardware.Contains("AMD Ryzen", StringComparison.OrdinalIgnoreCase),
+                "Core (Tctl/Tdie)", "CPU Package", "Package")),
+        new(
+            "pctelemetry-dashboard/gpu-temperature",
+            "PC Telemetry GPU Temperature",
+            () => FindTemperature(
+                state.GetLatest(),
+                reading => reading.Hardware.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+                    || reading.Hardware.Contains("GeForce", StringComparison.OrdinalIgnoreCase),
+                "GPU Core", "GPU"))
+    ];
+
+    private static float? FindTemperature(
+        IReadOnlyList<SensorReading> readings,
+        Func<SensorReading, bool> hardwareMatch,
+        params string[] preferredNames)
+    {
+        var candidates = readings
+            .Where(reading => string.Equals(
+                reading.SensorType, "Temperature", StringComparison.OrdinalIgnoreCase))
+            .Where(hardwareMatch)
+            .ToList();
+
+        foreach (var name in preferredNames)
+        {
+            var reading = candidates.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (reading is not null && reading.Value is > 0 and < 150)
+            {
+                return (float)reading.Value;
+            }
+        }
+
+        return null;
     }
 }
