@@ -2,6 +2,7 @@
 #include <Arduino_GFX_Library.h>
 #include <USB.h>
 #include <USBHIDVendor.h>
+#include <driver/gpio.h>
 #include <tusb.h>
 
 #include <algorithm>
@@ -37,12 +38,27 @@ constexpr uint32_t StatusReportIntervalMs = 1000;
 constexpr uint32_t OfflineBlankDelayMs = 10000;
 constexpr uint32_t UsbUnmountRecoveryDelayMs = 3000;
 constexpr uint32_t UsbFirstReportTimeoutMs = 10000;
+constexpr uint32_t DisplayRecoveryMagic = 0x4C434452;
 constexpr int16_t HeaderGroupLeft = 328;
 constexpr int16_t HeaderTextRight = 468;
+RTC_NOINIT_ATTR uint32_t displayRecoveryMarker;
+RTC_NOINIT_ATTR uint32_t displayRecoveryMarkerInverse;
+RTC_NOINIT_ATTR OutputReport retainedReport;
+bool displayRecoveryBoot = false;
 
 class VendorSt7796s : public Arduino_ST7796 {
  public:
   using Arduino_ST7796::Arduino_ST7796;
+
+  bool beginPreservingPanel(int32_t speed) {
+    // Recreate only the ESP32 LCD bus after a software reset. The ST7796S
+    // remained powered, so resending its full initialization would briefly
+    // blank the existing framebuffer.
+    if (!_bus->begin(speed)) return false;
+    setRotation(DisplayRotation);
+    setAddrWindow(0, 0, width(), height());
+    return true;
+  }
 
   void setRotation(uint8_t rotation) override {
     // This module's scan direction differs from Arduino_GFX's generic ST7796
@@ -66,11 +82,13 @@ class VendorSt7796s : public Arduino_ST7796 {
   void tftInit() override {
     pinMode(_rst, OUTPUT);
     digitalWrite(_rst, HIGH);
-    delay(5);
-    digitalWrite(_rst, LOW);
-    delay(15);
-    digitalWrite(_rst, HIGH);
-    delay(150);
+    if (!displayRecoveryBoot) {
+      delay(5);
+      digitalWrite(_rst, LOW);
+      delay(15);
+      digitalWrite(_rst, HIGH);
+      delay(150);
+    }
 
     _bus->beginWrite();
     send(0xF0, {0xC3});
@@ -136,6 +154,7 @@ uint32_t lastFrameMs = 0;
 uint32_t lastStatusReportMs = 0;
 uint32_t offlineSinceMs = 0;
 bool displayBlanked = false;
+bool needsFullRedraw = false;
 uint32_t recoveryBootAtMs = 0;
 uint32_t usbUnmountedAtMs = 0;
 bool usbWasMounted = false;
@@ -147,11 +166,23 @@ void restartUsb() {
   hasTelemetry = false;
   wasOnline = false;
   lastReportMs = 0;
+  displayRecoveryMarker = DisplayRecoveryMagic;
+  displayRecoveryMarkerInverse = ~DisplayRecoveryMagic;
+  retainedReport = current;
 
   // Recreate the USB controller and endpoints instead of retaining the stalled
   // HID OUT endpoint that Windows can leave behind after sleep.
   hid.end();
   tud_disconnect();
+
+  // Hold inactive LCD control levels through ESP.restart() so the powered TFT
+  // never sees a reset pulse or an accidental write while GPIOs reconfigure.
+  digitalWrite(DisplayPins::Rst, HIGH);
+  digitalWrite(DisplayPins::Cs, HIGH);
+  digitalWrite(DisplayPins::Wr, HIGH);
+  gpio_hold_en(static_cast<gpio_num_t>(DisplayPins::Rst));
+  gpio_hold_en(static_cast<gpio_num_t>(DisplayPins::Cs));
+  gpio_hold_en(static_cast<gpio_num_t>(DisplayPins::Wr));
   delay(1500);
   ESP.restart();
 }
@@ -403,6 +434,8 @@ void pollHid() {
     current = incoming;
     hasTelemetry = true;
     lastReportMs = millis();
+    displayRecoveryMarker = 0;
+    displayRecoveryMarkerInverse = 0;
   }
 }
 
@@ -417,12 +450,44 @@ void sendStatus() {
 }
 
 void setup() {
+  displayRecoveryBoot =
+      displayRecoveryMarker == DisplayRecoveryMagic &&
+      displayRecoveryMarkerInverse == ~DisplayRecoveryMagic &&
+      retainedReport.protocolVersion == TelemetryProtocol::Version;
+
+  if (displayRecoveryBoot) {
+    // Configure the pins as driven outputs before releasing their retained
+    // levels, avoiding a floating interval during recovery startup.
+    pinMode(DisplayPins::Rst, OUTPUT);
+    pinMode(DisplayPins::Cs, OUTPUT);
+    pinMode(DisplayPins::Wr, OUTPUT);
+    gpio_hold_dis(static_cast<gpio_num_t>(DisplayPins::Rst));
+    gpio_hold_dis(static_cast<gpio_num_t>(DisplayPins::Cs));
+    gpio_hold_dis(static_cast<gpio_num_t>(DisplayPins::Wr));
+    digitalWrite(DisplayPins::Rst, HIGH);
+    digitalWrite(DisplayPins::Cs, HIGH);
+    digitalWrite(DisplayPins::Wr, HIGH);
+  }
+
   // Start conservatively. Short jumper wiring can be raised later after the
   // display/controller combination is proven stable.
-  gfx->begin(10000000);
+  if (displayRecoveryBoot) {
+    panel->beginPreservingPanel(10000000);
+  } else {
+    gfx->begin(10000000);
+  }
   gfx->setTextWrap(false);
 
-  drawStaticUi();
+  if (displayRecoveryBoot) {
+    current = retainedReport;
+    // The retained panel framebuffer may have been blanked before USB
+    // recovery. Treat it as requiring one complete redraw when the first fresh
+    // telemetry report arrives; incremental card updates alone cannot restore
+    // static labels, borders, and backgrounds.
+    needsFullRedraw = true;
+  } else {
+    drawStaticUi();
+  }
   drawConnection(false);
 
   hid.begin();
@@ -467,8 +532,9 @@ void loop() {
   if (online != wasOnline) {
     wasOnline = online;
     if (online) {
-      if (displayBlanked) {
+      if (displayBlanked || needsFullRedraw) {
         displayBlanked = false;
+        needsFullRedraw = false;
         drawStaticUi();
         drawConnection(true);
         drawTelemetry();

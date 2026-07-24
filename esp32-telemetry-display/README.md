@@ -80,3 +80,7 @@ TinyUSB becoming unmounted without an electrical reset. It then detaches and
 reboots the USB controller. A mounted device that receives no first telemetry
 report within ten seconds uses the same recovery, handling the case where
 Windows reports successful HID writes that never reach the ESP32-S3.
+
+USB recovery retains the latest telemetry report in RTC memory and skips the
+panel reset pulse during recovery-only reboots. This avoids the white flash and
+redraws the previous values with an **OFFLINE** status until fresh data arrives.
