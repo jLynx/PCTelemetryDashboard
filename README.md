@@ -4,6 +4,8 @@ PC hardware telemetry dashboard with an ESP32-S3 USB display. The repository
 contains three separate projects so each one builds without compiling files
 from either of the others.
 
+<img width="1516" height="1016" alt="image" src="https://github.com/user-attachments/assets/cb2c2175-7829-4e63-ba94-98d0ae353f87" />
+
 ## Projects
 
 | Folder | Purpose |
