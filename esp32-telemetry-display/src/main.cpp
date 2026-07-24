@@ -31,6 +31,8 @@ constexpr uint16_t Offline = 0xF986;
 
 constexpr uint32_t FrameIntervalMs = 100;
 constexpr uint32_t StatusReportIntervalMs = 1000;
+constexpr int16_t HeaderGroupLeft = 328;
+constexpr int16_t HeaderTextRight = 468;
 
 class VendorSt7796s : public Arduino_ST7796 {
  public:
@@ -180,8 +182,6 @@ void drawStaticUi() {
   gfx->fillScreen(Colors::Background);
   gfx->fillRect(0, 0, DisplayWidth, 38, Colors::Header);
   drawText("PC TELEMETRY", 12, 8, 2, Colors::Text);
-  drawText("USB DISPLAY", 307, 13, 1, Colors::Muted);
-
   drawCardFrame(CpuTempCard);
   drawCardFrame(GpuTempCard);
   drawCardFrame(CpuPowerCard);
@@ -202,9 +202,18 @@ void drawStaticUi() {
 }
 
 void drawConnection(bool online) {
-  gfx->fillRect(386, 4, 88, 28, Colors::Header);
-  gfx->fillCircle(395, 17, 4, online ? Colors::Lime : Colors::Offline);
-  drawText(online ? "LIVE" : "OFFLINE", 405, 13, 1,
+  const char* label = online ? "LIVE" : "OFFLINE";
+  const int16_t labelWidth = static_cast<int16_t>(strlen(label) * 6);
+  const int16_t labelX = HeaderTextRight - labelWidth;
+  const int16_t dotX = labelX - 12;
+  constexpr int16_t UsbDisplayWidth = 11 * 6;
+  const int16_t usbDisplayX = dotX - 4 - 8 - UsbDisplayWidth;
+
+  gfx->fillRect(HeaderGroupLeft, 4, HeaderTextRight - HeaderGroupLeft + 2,
+                28, Colors::Header);
+  drawText("USB DISPLAY", usbDisplayX, 13, 1, Colors::Muted);
+  gfx->fillCircle(dotX, 17, 4, online ? Colors::Lime : Colors::Offline);
+  drawText(label, labelX, 13, 1,
            online ? Colors::Text : Colors::Offline);
 }
 
