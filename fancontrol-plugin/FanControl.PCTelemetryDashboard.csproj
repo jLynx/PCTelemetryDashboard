@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>FanControl.PCTelemetryDashboard</AssemblyName>
+    <RootNamespace>FanControl.PCTelemetryDashboard</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <FanControlDirectory Condition="'$(FanControlDirectory)' == ''">C:\Program Files (x86)\FanControl</FanControlDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="FanControl.Plugins">
+      <HintPath>$(FanControlDirectory)\FanControl.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FanControl.IPC">
+      <HintPath>$(FanControlDirectory)\FanControl.IPC.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="HidSharp">
+      <HintPath>$(FanControlDirectory)\HidSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Google.Protobuf">
+      <HintPath>$(FanControlDirectory)\Google.Protobuf.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Grpc.Core.Api">
+      <HintPath>$(FanControlDirectory)\Grpc.Core.Api.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GrpcDotNetNamedPipes">
+      <HintPath>$(FanControlDirectory)\GrpcDotNetNamedPipes.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="LibreHardwareMonitorLib">
+      <HintPath>$(FanControlDirectory)\LibreHardwareMonitorLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\desktop-app\wwwroot\index.html"
+                      Link="Dashboard\index.html"
+                      LogicalName="FanControl.PCTelemetryDashboard.index.html" />
+  </ItemGroup>
+
+</Project>

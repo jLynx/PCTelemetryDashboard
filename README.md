@@ -1,65 +1,62 @@
 # PC Telemetry Dashboard
 
-Local Windows dashboard for logging PC temperatures, fan control percent, fan RPM, load, power, and other numeric hardware sensors.
+PC hardware telemetry dashboard with an ESP32-S3 USB display. The repository
+contains three separate projects so each one builds without compiling files
+from either of the others.
 
-<img width="1516" height="1016" alt="image" src="https://github.com/user-attachments/assets/cb2c2175-7829-4e63-ba94-98d0ae353f87" />
+## Projects
 
+| Folder | Purpose |
+| --- | --- |
+| [`desktop-app`](desktop-app) | Original standalone .NET dashboard, tray application, web server, sensor collection, and USB HID host. |
+| [`fancontrol-plugin`](fancontrol-plugin) | FanControl plugin alternative that hosts the dashboard and USB connection inside FanControl. |
+| [`esp32-telemetry-display`](esp32-telemetry-display) | PlatformIO firmware for the ESP32-S3 and 480x320 ST7796S display. |
 
-## Run
+The standalone app and FanControl plugin are alternatives. Do not run both at
+the same time because only one process can listen on port `5127` and own the USB
+HID display.
 
-Open PowerShell in this folder and run:
+## Standalone app
+
+From the repository root:
 
 ```powershell
+cd .\desktop-app
 .\run-dashboard.ps1
 ```
 
-Then open:
+The dashboard opens at <http://localhost:5127>. To publish it as a tray app that
+starts automatically at sign-in, run `desktop-app\install-startup.ps1` once.
+See [`desktop-app/README.md`](desktop-app/README.md) for startup, logging, and
+sensor details.
 
-```text
-http://localhost:5127
+To build it directly:
+
+```powershell
+dotnet build .\desktop-app\PCTelemetryDashboard.csproj
 ```
 
-## USB telemetry display
+## FanControl plugin
 
-When the ESP32-S3 firmware in `esp32-telemetry-display` is connected, the
-dashboard automatically discovers its `PC Telemetry Display` USB HID interface
-and sends CPU/GPU temperature, load, power, and case-fan output percentages once
-per second. The display groups the matching radiator fans into one value and
-also shows IO, PCIe, and exhaust fan outputs. No COM port or USB driver is
-required. The worker automatically reconnects after unplugging and reconnecting
-the display.
+The plugin provides the same web dashboard and USB HID feed from inside
+FanControl:
 
-USB connection state is available at:
-
-```text
-http://localhost:5127/api/display/status
+```powershell
+cd .\fancontrol-plugin
+.\build-plugin.ps1
 ```
 
-For the best sensor coverage, run PowerShell as Administrator. The dashboard can read FanControl's live sensor IPC when it runs at the same elevation as FanControl. If FanControl is elevated and this dashboard is not, Windows denies the sensor pipe and only the local fallback sensors will show.
+Install `fancontrol-plugin\bin\Release\FanControl.PCTelemetryDashboard.zip`
+through FanControl. Quit FanControl and use `install-plugin.ps1` for subsequent
+updates because FanControl does not overwrite an installed plugin DLL. Clicking
+the loaded **PC Telemetry Dashboard** plugin opens the dashboard in the default
+browser. See [`fancontrol-plugin/README.md`](fancontrol-plugin/README.md) for the
+full install and removal workflow.
 
-The included `run-dashboard.ps1` script restarts itself as Administrator so motherboard sensors and FanControl's own sensor names/values are available.
+## ESP32-S3 firmware
 
-FanControl V271 may report `ReadSensorValues` as unimplemented over IPC. The dashboard handles that by using the values returned from `GetAllSensors`.
-
-## Sharing logs
-
-The dashboard writes CSV logs to:
-
-```text
-logs\
-```
-
-CSV logging is limited to the focused dashboard sensors, including temperatures, load %, power W, and the main case/radiator fan outputs. Optional fan cards such as CPU Pump and GPU fans are hidden by default and are not written to the CSV log.
-
-Optional temperature cards such as CCD temperatures and GPU VR SoC are also hidden by default and skipped by new CSV log rows. Use **Show optional temperatures** to inspect them in the dashboard when needed.
-
-Use **New log** to rotate to a fresh timestamped CSV and clear the chart history. Use **Reset log** to clear the active CSV and start the current log again.
-
-CSV logging starts paused whenever the application launches. Use **Resume CSV**
-when you want to write samples to disk; the next focused sample is written
-immediately. Use **Pause CSV** to stop writing while keeping live telemetry,
-charts, and the USB display running.
-
-Use the previous-log selector and **Open read-only** to inspect an existing CSV without changing it. While a previous log is open, live log controls are disabled in the dashboard view. Use **Live mode** to return to current telemetry.
-
-Use the dashboard's **Download CSV** button to export all available telemetry logs into one file.
+Open `esp32-telemetry-display` as a PlatformIO project, then build and upload the
+firmware. It communicates through a dedicated USB HID interface; no COM port or
+custom Windows driver is required. Wiring, display configuration, and USB
+protocol details are in
+[`esp32-telemetry-display/README.md`](esp32-telemetry-display/README.md).

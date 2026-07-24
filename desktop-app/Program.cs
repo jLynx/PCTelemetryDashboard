@@ -7,10 +7,16 @@ using LibreHardwareMonitor.Hardware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (string.IsNullOrWhiteSpace(builder.Configuration["urls"]))
+{
+    builder.WebHost.UseUrls(TrayIconWorker.DashboardUrl);
+}
+
 builder.Services.AddSingleton<TelemetryStore>();
 builder.Services.AddSingleton<UsbDisplayStatusStore>();
 builder.Services.AddHostedService<HardwareTelemetryWorker>();
 builder.Services.AddHostedService<UsbTelemetryDisplayWorker>();
+builder.Services.AddHostedService<TrayIconWorker>();
 
 var app = builder.Build();
 

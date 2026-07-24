@@ -24,13 +24,16 @@ constexpr uint16_t Lime = 0x9FE3;
 constexpr uint16_t Orange = 0xFD45;
 constexpr uint16_t Purple = 0xB59F;
 constexpr uint16_t Grid = 0x4228;
-constexpr uint16_t SparkFill = 0x3C50;
-constexpr uint16_t SparkLine = 0x7C72;
+// Higher-contrast pre-blended sparkline colors for the TFT's limited viewing
+// angle and contrast. The fill remains below the foreground line and text.
+constexpr uint16_t SparkFill = 0x4536;
+constexpr uint16_t SparkLine = 0x96DD;
 constexpr uint16_t Offline = 0xF986;
 }  // namespace Colors
 
 constexpr uint32_t FrameIntervalMs = 100;
 constexpr uint32_t StatusReportIntervalMs = 1000;
+constexpr uint32_t OfflineBlankDelayMs = 10000;
 constexpr int16_t HeaderGroupLeft = 328;
 constexpr int16_t HeaderTextRight = 468;
 
@@ -116,8 +119,9 @@ Arduino_DataBus* bus = new Arduino_ESP32LCD8(
 
 // Confirmed panel controller: ST7796S. Arduino_GFX names the class ST7796;
 // the S suffix is the same controller family/interface for this purpose.
-Arduino_GFX* gfx = new VendorSt7796s(bus, DisplayPins::Rst,
-                                    DisplayRotation, false);
+VendorSt7796s* panel = new VendorSt7796s(bus, DisplayPins::Rst,
+                                        DisplayRotation, false);
+Arduino_GFX* gfx = panel;
 USBHIDVendor hid(TelemetryProtocol::HidPayloadSize);
 
 OutputReport current{};
@@ -127,6 +131,8 @@ bool wasOnline = false;
 uint32_t lastReportMs = 0;
 uint32_t lastFrameMs = 0;
 uint32_t lastStatusReportMs = 0;
+uint32_t offlineSinceMs = 0;
+bool displayBlanked = false;
 
 constexpr size_t SparkPoints = 30U * 60U;
 
@@ -410,7 +416,28 @@ void loop() {
 
   if (online != wasOnline) {
     wasOnline = online;
-    drawConnection(online);
+    if (online) {
+      if (displayBlanked) {
+        displayBlanked = false;
+        drawStaticUi();
+        drawConnection(true);
+        drawTelemetry();
+        lastFrameMs = now;
+      } else {
+        drawConnection(true);
+      }
+    } else {
+      offlineSinceMs = now;
+      drawConnection(false);
+    }
+  }
+
+  if (!online && !displayBlanked && now - offlineSinceMs >= OfflineBlankDelayMs) {
+    // Display-off and sleep commands make this normally-white panel turn white
+    // under its always-on backlight. Keep the controller active and drive every
+    // pixel black for the darkest state possible without a backlight switch.
+    gfx->fillScreen(BLACK);
+    displayBlanked = true;
   }
 
   if (online && now - lastFrameMs >= FrameIntervalMs &&
