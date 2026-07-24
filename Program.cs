@@ -8,7 +8,9 @@ using LibreHardwareMonitor.Hardware;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton<TelemetryStore>();
+builder.Services.AddSingleton<UsbDisplayStatusStore>();
 builder.Services.AddHostedService<HardwareTelemetryWorker>();
+builder.Services.AddHostedService<UsbTelemetryDisplayWorker>();
 
 var app = builder.Build();
 
@@ -16,6 +18,8 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/api/status", (TelemetryStore store) => store.GetStatus());
+
+app.MapGet("/api/display/status", (UsbDisplayStatusStore status) => status.Get());
 
 app.MapGet("/api/current", (TelemetryStore store) => new
 {
@@ -495,9 +499,9 @@ public sealed class TelemetryStore
     private IReadOnlyList<SensorReading> _latest = [];
     private string _activeLogFileName = "";
     private bool _forceNextLogWrite;
-    private bool _isCsvLoggingPaused;
+    private bool _isCsvLoggingPaused = true;
     private string? _lastError;
-    private string? _note = "Waiting for first hardware sample.";
+    private string? _note = "Waiting for first hardware sample. CSV logging starts paused.";
 
     public object LogFileGate { get; } = new();
 

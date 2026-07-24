@@ -16,6 +16,15 @@ if (-not $isAdmin) {
     exit
 }
 
+$existingListener = Get-NetTCPConnection -LocalPort 5127 -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($existingListener) {
+    Write-Host "PC Telemetry Dashboard is already running on port 5127 (PID $($existingListener.OwningProcess))." -ForegroundColor Yellow
+    Write-Host "Close the existing dashboard window or stop that process before starting the updated build."
+    Read-Host "Press Enter to close this window"
+    exit
+}
+
 Write-Host "Starting PC Telemetry Dashboard at $Url"
 Start-Process $Url
 dotnet run --project (Join-Path $ProjectRoot "PCTelemetryDashboard.csproj") -p:UseAppHost=false -- --urls $Url

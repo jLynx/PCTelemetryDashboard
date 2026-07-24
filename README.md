@@ -19,6 +19,22 @@ Then open:
 http://localhost:5127
 ```
 
+## USB telemetry display
+
+When the ESP32-S3 firmware in `esp32-telemetry-display` is connected, the
+dashboard automatically discovers its `PC Telemetry Display` USB HID interface
+and sends CPU/GPU temperature, load, power, and case-fan output percentages once
+per second. The display groups the matching radiator fans into one value and
+also shows IO, PCIe, and exhaust fan outputs. No COM port or USB driver is
+required. The worker automatically reconnects after unplugging and reconnecting
+the display.
+
+USB connection state is available at:
+
+```text
+http://localhost:5127/api/display/status
+```
+
 For the best sensor coverage, run PowerShell as Administrator. The dashboard can read FanControl's live sensor IPC when it runs at the same elevation as FanControl. If FanControl is elevated and this dashboard is not, Windows denies the sensor pipe and only the local fallback sensors will show.
 
 The included `run-dashboard.ps1` script restarts itself as Administrator so motherboard sensors and FanControl's own sensor names/values are available.
@@ -39,7 +55,10 @@ Optional temperature cards such as CCD temperatures and GPU VR SoC are also hidd
 
 Use **New log** to rotate to a fresh timestamped CSV and clear the chart history. Use **Reset log** to clear the active CSV and start the current log again.
 
-Use **Pause CSV** to stop writing new samples to disk while keeping live telemetry and charts running. Use **Resume CSV** to start writing again; the next focused sample is written immediately.
+CSV logging starts paused whenever the application launches. Use **Resume CSV**
+when you want to write samples to disk; the next focused sample is written
+immediately. Use **Pause CSV** to stop writing while keeping live telemetry,
+charts, and the USB display running.
 
 Use the previous-log selector and **Open read-only** to inspect an existing CSV without changing it. While a previous log is open, live log controls are disabled in the dashboard view. Use **Live mode** to return to current telemetry.
 

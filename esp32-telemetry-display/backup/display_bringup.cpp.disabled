@@ -1,0 +1,285 @@
+#include <Arduino.h>
+
+#include "display_config.h"
+
+// Minimal ST7796S bring-up test. This intentionally avoids Arduino_GFX, USB,
+// DMA and the ESP32-S3 LCD peripheral. It ports the controller sequence from
+// the manufacturer's Arduino demo to the shield's 8-bit parallel interface.
+
+namespace {
+
+constexpr int DataPins[8] = {
+    DisplayPins::D0, DisplayPins::D1, DisplayPins::D2, DisplayPins::D3,
+    DisplayPins::D4, DisplayPins::D5, DisplayPins::D6, DisplayPins::D7,
+};
+
+constexpr uint16_t Black = 0x0000;
+constexpr uint16_t White = 0xFFFF;
+constexpr uint16_t Red = 0xF800;
+constexpr uint16_t Green = 0x07E0;
+constexpr uint16_t Blue = 0x001F;
+
+void logLine(const char* message) {
+  Serial.printf("[%8lu ms] %s\r\n", millis(), message);
+  Serial.flush();
+}
+
+void writeBus(uint8_t value) {
+  for (int bit = 0; bit < 8; ++bit) {
+    digitalWrite(DataPins[bit], (value >> bit) & 1U);
+  }
+
+  digitalWrite(DisplayPins::Wr, LOW);
+  delayMicroseconds(1);
+  digitalWrite(DisplayPins::Wr, HIGH);
+  delayMicroseconds(1);
+}
+
+void writeCommand(uint8_t command) {
+  digitalWrite(DisplayPins::Dc, LOW);
+  writeBus(command);
+}
+
+void writeData(uint8_t data) {
+  digitalWrite(DisplayPins::Dc, HIGH);
+  writeBus(data);
+}
+
+void commandData(uint8_t command, uint8_t data) {
+  writeCommand(command);
+  writeData(data);
+}
+
+void hardwareReset() {
+  logLine("LCD reset HIGH");
+  digitalWrite(DisplayPins::Rst, HIGH);
+  delay(5);
+  logLine("LCD reset LOW");
+  digitalWrite(DisplayPins::Rst, LOW);
+  delay(15);
+  logLine("LCD reset HIGH; waiting 150 ms");
+  digitalWrite(DisplayPins::Rst, HIGH);
+  delay(150);
+}
+
+void initSt7796s() {
+  logLine("Starting ST7796S vendor initialization");
+  hardwareReset();
+  digitalWrite(DisplayPins::Cs, LOW);
+  logLine("LCD CS LOW");
+
+  // Exact ST7796S sequence from the supplied LCDWIKI Arduino demo.
+  logLine("Unlocking extended command set");
+  commandData(0xF0, 0xC3);
+  commandData(0xF0, 0x96);
+  commandData(0x36, 0x68);
+  commandData(0x3A, 0x05);  // 16-bit RGB565 pixel format
+  commandData(0xB0, 0x80);
+
+  writeCommand(0xB6);
+  writeData(0x00);
+  writeData(0x02);
+
+  writeCommand(0xB5);
+  writeData(0x02);
+  writeData(0x03);
+  writeData(0x00);
+  writeData(0x04);
+
+  writeCommand(0xB1);
+  writeData(0x80);
+  writeData(0x10);
+
+  commandData(0xB4, 0x00);
+  commandData(0xB7, 0xC6);
+  commandData(0xC5, 0x24);
+  commandData(0xE4, 0x31);
+
+  logLine("Writing display output and gamma configuration");
+  writeCommand(0xE8);
+  constexpr uint8_t e8[] = {0x40, 0x8A, 0x00, 0x00,
+                            0x29, 0x19, 0xA5, 0x33};
+  for (uint8_t value : e8) writeData(value);
+
+  writeCommand(0xC2);
+  writeCommand(0xA7);
+
+  writeCommand(0xE0);
+  constexpr uint8_t positiveGamma[] = {
+      0xF0, 0x09, 0x13, 0x12, 0x12, 0x2B, 0x3C,
+      0x44, 0x4B, 0x1B, 0x18, 0x17, 0x1D, 0x21,
+  };
+  for (uint8_t value : positiveGamma) writeData(value);
+
+  writeCommand(0xE1);
+  constexpr uint8_t negativeGamma[] = {
+      0xF0, 0x09, 0x13, 0x0C, 0x0D, 0x27, 0x3B,
+      0x44, 0x4D, 0x0B, 0x17, 0x17, 0x1D, 0x21,
+  };
+  for (uint8_t value : negativeGamma) writeData(value);
+
+  commandData(0x36, 0x48);
+  commandData(0xF0, 0xC3);
+  commandData(0xF0, 0x69);
+  writeCommand(0x13);  // normal display mode
+  logLine("Sending sleep-out command 0x11");
+  writeCommand(0x11);  // sleep out
+  delay(150);
+  logLine("Sending display-on command 0x29");
+  writeCommand(0x29);  // display on
+  delay(50);
+  logLine("ST7796S initialization complete; CS remains LOW");
+}
+
+void initIli9486() {
+  logLine("Starting ILI9486 vendor initialization");
+  hardwareReset();
+  digitalWrite(DisplayPins::Cs, HIGH);
+  digitalWrite(DisplayPins::Wr, HIGH);
+  digitalWrite(DisplayPins::Cs, LOW);
+  logLine("LCD CS LOW");
+
+  // Exact ILI9486 sequence from the supplied MAR3501 8-bit parallel demo.
+  writeCommand(0xF9); writeData(0x00); writeData(0x08);
+  writeCommand(0xC0); writeData(0x19); writeData(0x1A);
+  writeCommand(0xC1); writeData(0x45); writeData(0x00);
+  commandData(0xC2, 0x33);
+  writeCommand(0xC5); writeData(0x00); writeData(0x28);
+  writeCommand(0xB1); writeData(0x90); writeData(0x11);
+  commandData(0xB4, 0x02);
+  writeCommand(0xB6); writeData(0x00); writeData(0x42); writeData(0x3B);
+  commandData(0xB7, 0x07);
+
+  logLine("Writing ILI9486 gamma configuration");
+  writeCommand(0xE0);
+  constexpr uint8_t positiveGamma[] = {
+      0x1F, 0x25, 0x22, 0x0B, 0x06, 0x0A, 0x4E, 0xC6,
+      0x39, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  for (uint8_t value : positiveGamma) writeData(value);
+
+  writeCommand(0xE1);
+  constexpr uint8_t negativeGamma[] = {
+      0x1F, 0x3F, 0x3F, 0x0F, 0x1F, 0x0F, 0x46, 0x49,
+      0x31, 0x05, 0x09, 0x03, 0x1C, 0x1A, 0x00,
+  };
+  for (uint8_t value : negativeGamma) writeData(value);
+
+  writeCommand(0xF1);
+  constexpr uint8_t f1[] = {0x36, 0x04, 0x00, 0x3C, 0x0F, 0x0F, 0xA4, 0x02};
+  for (uint8_t value : f1) writeData(value);
+
+  writeCommand(0xF2);
+  constexpr uint8_t f2[] = {0x18, 0xA3, 0x12, 0x02, 0x32,
+                            0x12, 0xFF, 0x32, 0x00};
+  for (uint8_t value : f2) writeData(value);
+
+  writeCommand(0xF4);
+  constexpr uint8_t f4[] = {0x40, 0x00, 0x08, 0x91, 0x04};
+  for (uint8_t value : f4) writeData(value);
+
+  writeCommand(0xF8); writeData(0x21); writeData(0x04);
+  commandData(0x36, 0x48);
+  commandData(0x3A, 0x55);  // RGB565
+  logLine("Sending ILI9486 sleep-out command 0x11");
+  writeCommand(0x11);
+  delay(120);
+  logLine("Sending ILI9486 display-on command 0x29");
+  writeCommand(0x29);
+  delay(50);
+  logLine("ILI9486 initialization complete; CS remains LOW");
+}
+
+void setAddressWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+  writeCommand(0x2A);
+  writeData(x0 >> 8);
+  writeData(x0 & 0xFF);
+  writeData(x1 >> 8);
+  writeData(x1 & 0xFF);
+
+  writeCommand(0x2B);
+  writeData(y0 >> 8);
+  writeData(y0 & 0xFF);
+  writeData(y1 >> 8);
+  writeData(y1 & 0xFF);
+
+  writeCommand(0x2C);
+}
+
+void fillScreen(uint16_t color, const char* name) {
+  // Native controller orientation is 320x480. A solid fill is orientation
+  // independent and proves every required write/control line first.
+  const uint32_t startedMs = millis();
+  Serial.printf("[%8lu ms] Filling screen %s (RGB565 0x%04X)\r\n",
+                startedMs, name, color);
+  Serial.flush();
+  setAddressWindow(0, 0, 319, 479);
+  digitalWrite(DisplayPins::Dc, HIGH);
+  for (uint32_t pixel = 0; pixel < 320UL * 480UL; ++pixel) {
+    writeBus(color >> 8);
+    writeBus(color & 0xFF);
+  }
+  Serial.printf("[%8lu ms] Finished %s fill in %lu ms\r\n", millis(), name,
+                millis() - startedMs);
+  Serial.flush();
+}
+
+}  // namespace
+
+void setup() {
+  Serial.begin(115200);
+  const uint32_t serialWaitStart = millis();
+  while (!Serial && millis() - serialWaitStart < 3000) delay(10);
+
+  logLine("ESP32-S3 ST7796S parallel display diagnostic starting");
+  Serial.printf("Pins: D0=%d D1=%d D2=%d D3=%d D4=%d D5=%d D6=%d D7=%d\r\n",
+                DisplayPins::D0, DisplayPins::D1, DisplayPins::D2,
+                DisplayPins::D3, DisplayPins::D4, DisplayPins::D5,
+                DisplayPins::D6, DisplayPins::D7);
+  Serial.printf("Pins: CS=%d RS/DC=%d WR=%d RST=%d; RD must be tied to 3V3\r\n",
+                DisplayPins::Cs, DisplayPins::Dc, DisplayPins::Wr,
+                DisplayPins::Rst);
+  Serial.flush();
+
+  logLine("Configuring control and data GPIOs as outputs");
+  pinMode(DisplayPins::Cs, OUTPUT);
+  pinMode(DisplayPins::Dc, OUTPUT);
+  pinMode(DisplayPins::Wr, OUTPUT);
+  pinMode(DisplayPins::Rst, OUTPUT);
+  for (int pin : DataPins) pinMode(pin, OUTPUT);
+
+  digitalWrite(DisplayPins::Cs, HIGH);
+  digitalWrite(DisplayPins::Dc, HIGH);
+  digitalWrite(DisplayPins::Wr, HIGH);
+  digitalWrite(DisplayPins::Rst, HIGH);
+  for (int pin : DataPins) digitalWrite(pin, LOW);
+
+  logLine("Setup complete; entering alternating controller test");
+}
+
+void loop() {
+  static bool testSt7796s = true;
+  logLine(testSt7796s
+              ? "=== BEGIN ST7796S TEST PHASE ==="
+              : "=== BEGIN ILI9486 TEST PHASE ===");
+
+  if (testSt7796s) {
+    initSt7796s();
+  } else {
+    initIli9486();
+  }
+
+  fillScreen(Red, "RED");
+  delay(1000);
+  fillScreen(Green, "GREEN");
+  delay(1000);
+  fillScreen(Blue, "BLUE");
+  delay(1000);
+  fillScreen(Black, "BLACK");
+  delay(2000);
+
+  logLine(testSt7796s
+              ? "=== END ST7796S TEST PHASE ==="
+              : "=== END ILI9486 TEST PHASE ===");
+  testSt7796s = !testSt7796s;
+}
