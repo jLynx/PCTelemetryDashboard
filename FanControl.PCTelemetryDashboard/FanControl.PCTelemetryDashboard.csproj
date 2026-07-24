@@ -34,10 +34,6 @@
       <HintPath>$(FanControlDirectory)\GrpcDotNetNamedPipes.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="LibreHardwareMonitorLib">
-      <HintPath>$(FanControlDirectory)\LibreHardwareMonitorLib.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
   </ItemGroup>
 
   <ItemGroup>

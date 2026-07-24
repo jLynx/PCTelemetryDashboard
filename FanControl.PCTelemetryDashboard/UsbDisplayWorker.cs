@@ -107,7 +107,7 @@ internal sealed class UsbDisplayWorker(
         }
         else if (error is not null && !string.Equals(_lastError, error.Message, StringComparison.Ordinal))
         {
-            log($"USB display error: {error.Message}");
+            log($"USB display error: {error}");
         }
 
         _wasConnected = false;

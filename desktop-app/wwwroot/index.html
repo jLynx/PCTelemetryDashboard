@@ -602,10 +602,10 @@
     const performanceConfig = [
       { key: "cpu-total-load", label: "CPU Total", hardware: "AMD Ryzen 9 9950X", sensorType: "Load", chartView: "loadPercent", unit: "%", exactNameOnly: true, names: ["CPU Total"] },
       { key: "cpu-core-max-load", label: "CPU Core Max", hardware: "AMD Ryzen 9 9950X", sensorType: "Load", chartView: "loadPercent", unit: "%", exactNameOnly: true, names: ["CPU Core Max"] },
-      { key: "gpu-core-load", label: "GPU Core", hardware: "NVIDIA GeForce RTX 5070 Ti", sensorType: "Load", chartView: "loadPercent", unit: "%", exactNameOnly: true, names: ["GPU Core", "GPU"] },
-      { key: "gpu-memory-controller-load", label: "GPU Memory Controller", hardware: "NVIDIA GeForce RTX 5070 Ti", sensorType: "Load", chartView: "loadPercent", unit: "%", exactNameOnly: true, names: ["GPU Memory Controller", "Memory Controller"] },
+      { key: "gpu-core-load", label: "GPU Core", hardware: "NVIDIA GeForce RTX 5070 Ti", hardwareType: "GpuNvidia", sensorType: "Load", chartView: "loadPercent", unit: "%", exactNameOnly: true, names: ["GPU Core", "GPU"] },
+      { key: "gpu-memory-controller-load", label: "GPU Memory Controller", hardware: "NVIDIA GeForce RTX 5070 Ti", hardwareType: "GpuNvidia", sensorType: "Load", chartView: "loadPercent", unit: "%", exactNameOnly: true, names: ["GPU Memory Controller", "Memory Controller"] },
       { key: "cpu-package-power", label: "CPU Package Power", hardware: "AMD Ryzen 9 9950X", sensorType: "Power", chartView: "power", unit: "W", exactNameOnly: true, names: ["Package", "CPU Package", "CPU Package Power"] },
-      { key: "gpu-power", label: "GPU Power", hardware: "NVIDIA GeForce RTX 5070 Ti", sensorType: "Power", chartView: "power", unit: "W", exactNameOnly: true, names: ["GPU Package", "GPU Power", "Total Board Power", "Board Power"] }
+      { key: "gpu-power", label: "GPU Power", hardware: "NVIDIA GeForce RTX 5070 Ti", hardwareType: "GpuNvidia", sensorType: "Power", chartView: "power", unit: "W", exactNameOnly: true, names: ["GPU Package", "GPU Power", "Total Board Power", "Board Power"] }
     ];
 
     const fanConfig = [
@@ -1300,7 +1300,9 @@
           return false;
         }
 
-        const hardwareMatch = !config.hardware || sameText(reading.hardware, config.hardware) || reading.hardware.includes(config.hardware) || config.hardware.includes(reading.hardware);
+        const hardwareTypeMatch = config.hardwareType && sameText(reading.hardwareType, config.hardwareType);
+        const hardwareNameMatch = !config.hardware || sameText(reading.hardware, config.hardware) || reading.hardware.includes(config.hardware) || config.hardware.includes(reading.hardware);
+        const hardwareMatch = hardwareTypeMatch || hardwareNameMatch;
         return hardwareMatch;
       });
 

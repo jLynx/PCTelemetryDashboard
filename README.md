@@ -11,7 +11,7 @@ from either of the others.
 | Folder | Purpose |
 | --- | --- |
 | [`desktop-app`](desktop-app) | Original standalone .NET dashboard, tray application, web server, sensor collection, and USB HID host. |
-| [`fancontrol-plugin`](fancontrol-plugin) | FanControl plugin alternative that hosts the dashboard and USB connection inside FanControl. |
+| [`FanControl.PCTelemetryDashboard`](FanControl.PCTelemetryDashboard) | FanControl plugin alternative that hosts the dashboard and USB connection inside FanControl. |
 | [`esp32-telemetry-display`](esp32-telemetry-display) | PlatformIO firmware for the ESP32-S3 and 480x320 ST7796S display. |
 
 The standalone app and FanControl plugin are alternatives. Do not run both at
@@ -44,16 +44,17 @@ The plugin provides the same web dashboard and USB HID feed from inside
 FanControl:
 
 ```powershell
-cd .\fancontrol-plugin
+cd .\FanControl.PCTelemetryDashboard
 .\build-plugin.ps1
 ```
 
-Install `fancontrol-plugin\bin\Release\FanControl.PCTelemetryDashboard.zip`
+Install `FanControl.PCTelemetryDashboard\bin\Release\FanControl.PCTelemetryDashboard.zip`
 through FanControl. Quit FanControl and use `install-plugin.ps1` for subsequent
-updates because FanControl does not overwrite an installed plugin DLL. Clicking
-the loaded **PC Telemetry Dashboard** plugin opens the dashboard in the default
-browser. See [`fancontrol-plugin/README.md`](fancontrol-plugin/README.md) for the
-full install and removal workflow.
+updates because FanControl does not overwrite an installed plugin DLL. Open
+<http://localhost:5127> directly; FanControl does not provide plugins with a
+custom action for loaded-plugin list entries. See
+[`FanControl.PCTelemetryDashboard/README.md`](FanControl.PCTelemetryDashboard/README.md) for the full install,
+diagnostics, and removal workflow.
 
 ## ESP32-S3 firmware
 

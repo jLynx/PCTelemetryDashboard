@@ -73,7 +73,7 @@ internal sealed class DashboardServer(
                 if (!string.Equals(_lastStartError, ex.Message, StringComparison.Ordinal))
                 {
                     _lastStartError = ex.Message;
-                    log($"Dashboard web server could not bind to port 5127: {ex.Message}");
+                    log($"Dashboard web server could not bind to port 5127: {ex}");
                 }
 
                 try
@@ -134,7 +134,7 @@ internal sealed class DashboardServer(
         }
         catch (Exception ex)
         {
-            log($"Dashboard request failed: {ex.Message}");
+            log($"Dashboard request failed: {ex}");
             await WriteTextAsync(context.Response, "Dashboard request failed.", 500).ConfigureAwait(false);
         }
         finally

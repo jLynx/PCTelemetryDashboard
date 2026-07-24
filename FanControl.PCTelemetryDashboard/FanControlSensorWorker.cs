@@ -1,5 +1,4 @@
 using FanControl.IPC;
-using LibreHardwareMonitor.Hardware;
 
 namespace FanControl.PCTelemetryDashboard;
 
@@ -9,7 +8,8 @@ internal sealed class FanControlSensorWorker(
 {
     private string? _lastError;
     private string? _gpuFallbackError;
-    private Computer? _gpuComputer;
+    private readonly NvidiaNvmlReader _nvidia = new();
+    private bool _gpuSourceLogged;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -27,7 +27,7 @@ internal sealed class FanControlSensorWorker(
                 if (!string.Equals(_lastError, ex.Message, StringComparison.Ordinal))
                 {
                     _lastError = ex.Message;
-                    log($"FanControl sensor read failed: {ex.Message}");
+                    log($"FanControl sensor read failed: {ex}");
                 }
             }
 
@@ -41,8 +41,7 @@ internal sealed class FanControlSensorWorker(
             }
         }
 
-        _gpuComputer?.Close();
-        _gpuComputer = null;
+        _nvidia.Dispose();
     }
 
     private IReadOnlyList<SensorReading> ReadSnapshot(DateTimeOffset timestampUtc)
@@ -117,19 +116,68 @@ internal sealed class FanControlSensorWorker(
                 UnitFor(sensor.Type)));
         }
 
-        var needsGpuLoad = !readings.Any(reading =>
+        var needsGpuCoreLoad = !readings.Any(reading =>
             IsNvidiaHardware(reading)
-            && string.Equals(reading.SensorType, "Load", StringComparison.OrdinalIgnoreCase));
+            && string.Equals(reading.SensorType, "Load", StringComparison.OrdinalIgnoreCase)
+            && (reading.Name.Contains("Core", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(reading.Name, "GPU", StringComparison.OrdinalIgnoreCase)));
+        var needsGpuMemoryLoad = !readings.Any(reading =>
+            IsNvidiaHardware(reading)
+            && string.Equals(reading.SensorType, "Load", StringComparison.OrdinalIgnoreCase)
+            && reading.Name.Contains("Memory", StringComparison.OrdinalIgnoreCase));
         var needsGpuPower = !readings.Any(reading =>
             IsNvidiaHardware(reading)
             && string.Equals(reading.SensorType, "Power", StringComparison.OrdinalIgnoreCase));
 
-        if (needsGpuLoad || needsGpuPower)
+        if (needsGpuCoreLoad || needsGpuMemoryLoad || needsGpuPower)
         {
             try
             {
-                readings.AddRange(ReadLocalNvidiaSnapshot(
-                    timestampUtc, needsGpuLoad, needsGpuPower));
+                var metrics = _nvidia.Read();
+                if (needsGpuCoreLoad)
+                {
+                    readings.Add(new SensorReading(
+                        timestampUtc,
+                        "nvml:/gpu-nvidia/0/load/0",
+                        "NVIDIA GPU",
+                        "GpuNvidia",
+                        "GPU Core",
+                        "Load",
+                        Math.Round(metrics.LoadPercent, 3),
+                        "%"));
+                }
+
+                if (needsGpuMemoryLoad)
+                {
+                    readings.Add(new SensorReading(
+                        timestampUtc,
+                        "nvml:/gpu-nvidia/0/load/1",
+                        "NVIDIA GPU",
+                        "GpuNvidia",
+                        "GPU Memory Controller",
+                        "Load",
+                        Math.Round(metrics.MemoryLoadPercent, 3),
+                        "%"));
+                }
+
+                if (needsGpuPower)
+                {
+                    readings.Add(new SensorReading(
+                        timestampUtc,
+                        "nvml:/gpu-nvidia/0/power/0",
+                        "NVIDIA GPU",
+                        "GpuNvidia",
+                        "GPU Package",
+                        "Power",
+                        Math.Round(metrics.PowerWatts, 3),
+                        "W"));
+                }
+
+                if (!_gpuSourceLogged)
+                {
+                    _gpuSourceLogged = true;
+                    log("Using NVIDIA NVML for live GPU load and power fallback sensors.");
+                }
                 _gpuFallbackError = null;
             }
             catch (Exception ex)
@@ -137,86 +185,12 @@ internal sealed class FanControlSensorWorker(
                 if (!string.Equals(_gpuFallbackError, ex.Message, StringComparison.Ordinal))
                 {
                     _gpuFallbackError = ex.Message;
-                    log($"NVIDIA load/power fallback failed: {ex.Message}");
+                    log($"NVIDIA NVML load/power fallback failed: {ex}");
                 }
             }
         }
 
         return readings;
-    }
-
-    private IReadOnlyList<SensorReading> ReadLocalNvidiaSnapshot(
-        DateTimeOffset timestampUtc,
-        bool includeLoad,
-        bool includePower)
-    {
-        EnsureGpuComputerOpen();
-        var readings = new List<SensorReading>();
-        foreach (var hardware in _gpuComputer!.Hardware)
-        {
-            ReadNvidiaHardware(
-                hardware, timestampUtc, includeLoad, includePower, readings);
-        }
-        return readings;
-    }
-
-    private void EnsureGpuComputerOpen()
-    {
-        if (_gpuComputer is not null)
-        {
-            return;
-        }
-
-        _gpuComputer = new Computer
-        {
-            IsGpuEnabled = true
-        };
-        _gpuComputer.Open();
-    }
-
-    private static void ReadNvidiaHardware(
-        IHardware hardware,
-        DateTimeOffset timestampUtc,
-        bool includeLoad,
-        bool includePower,
-        List<SensorReading> readings)
-    {
-        hardware.Update();
-        var isNvidia = hardware.HardwareType == HardwareType.GpuNvidia
-            || hardware.Name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
-            || hardware.Name.Contains("GeForce", StringComparison.OrdinalIgnoreCase);
-
-        if (isNvidia)
-        {
-            foreach (var sensor in hardware.Sensors)
-            {
-                var wanted = (includeLoad && sensor.SensorType == SensorType.Load)
-                    || (includePower && sensor.SensorType == SensorType.Power);
-                if (!wanted
-                    || sensor.Value is null
-                    || float.IsNaN(sensor.Value.Value)
-                    || float.IsInfinity(sensor.Value.Value))
-                {
-                    continue;
-                }
-
-                readings.Add(new SensorReading(
-                    timestampUtc,
-                    $"local:{sensor.Identifier}",
-                    hardware.Name,
-                    hardware.HardwareType.ToString(),
-                    sensor.Name,
-                    sensor.SensorType.ToString(),
-                    Math.Round(sensor.Value.Value, 3),
-                    sensor.SensorType == SensorType.Load ? "%" : "W"));
-            }
-        }
-
-        foreach (var subHardware in hardware.SubHardware)
-        {
-            ReadNvidiaHardware(
-                subHardware, timestampUtc, includeLoad, includePower, readings);
-        }
     }
 
     private static bool IsNvidiaHardware(SensorReading reading) =>

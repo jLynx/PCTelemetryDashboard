@@ -6,6 +6,8 @@ runs inside FanControl and provides:
 - the ESP32-S3 USB HID telemetry connection and automatic reconnection;
 - the dashboard at `http://localhost:5127`;
 - one-second live sensor sampling through FanControl IPC;
+- live NVIDIA GPU load and power through NVIDIA NVML when FanControl does not
+  expose those sensor types;
 - up to six hours of focused in-memory graph history;
 - optional CSV logging, paused by default;
 - clean `Initialize -> Load -> Close` lifecycle handling.
@@ -18,7 +20,7 @@ This project targets the installed FanControl V272 .NET 10 runtime and defaults
 to finding FanControl under `C:\Program Files (x86)\FanControl`.
 
 ```powershell
-cd .\fancontrol-plugin
+cd .\FanControl.PCTelemetryDashboard
 .\build-plugin.ps1
 ```
 
@@ -43,12 +45,21 @@ dotnet build -c Release -p:FanControlDirectory="D:\Path\To\FanControl"
    FanControl and run `install-plugin.ps1`; FanControl's installer deliberately
    refuses to overwrite an existing plugin DLL.
 3. Restart FanControl, or use its sensor/plugin refresh action.
-4. Click **PC Telemetry Dashboard** in FanControl's loaded-plugin list, or open
-   `http://localhost:5127` directly.
+4. Open `http://localhost:5127` directly or save it as a browser bookmark.
+   FanControl's loaded-plugin entries only select the plugin details panel; its
+   plugin API does not expose a custom click action.
 5. Connect the ESP32-S3 display and confirm it changes from OFFLINE to LIVE.
 
 Plugin messages are prefixed with `[PC Telemetry Dashboard]` in FanControl's
-`log.txt`. CSV files are stored under:
+`log.txt`. A dedicated diagnostic log, including complete exception details, is
+also written to:
+
+```text
+%TEMP%\PCTelemetryDashboard\fancontrol-plugin.log
+```
+
+It rolls over to `fancontrol-plugin.previous.log` at 2 MB. CSV files are stored
+under:
 
 ```text
 %LOCALAPPDATA%\PCTelemetryDashboard\plugin-logs

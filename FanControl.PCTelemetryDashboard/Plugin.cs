@@ -1,9 +1,8 @@
-using System.Diagnostics;
 using FanControl.Plugins;
 
 namespace FanControl.PCTelemetryDashboard;
 
-public sealed class Plugin(IPluginLogger logger) : IPlugin2, IPluginApplicationControl
+public sealed class Plugin(IPluginLogger logger) : IPlugin2
 {
     private const string DashboardUrl = "http://localhost:5127";
     private readonly object _lifecycleGate = new();
@@ -41,19 +40,23 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2, IPluginApplicationC
                 _server = server;
                 _workers =
                 [
-                    Task.Run(() => sensorWorker.RunAsync(cancellation.Token)),
-                    Task.Run(() => usbWorker.RunAsync(cancellation.Token)),
-                    Task.Run(() => server.RunAsync(cancellation.Token))
+                    Task.Run(() => RunWorkerAsync(
+                        "sensor", () => sensorWorker.RunAsync(cancellation.Token), cancellation.Token)),
+                    Task.Run(() => RunWorkerAsync(
+                        "USB display", () => usbWorker.RunAsync(cancellation.Token), cancellation.Token)),
+                    Task.Run(() => RunWorkerAsync(
+                        "dashboard server", () => server.RunAsync(cancellation.Token), cancellation.Token))
                 ];
 
                 Log($"PC Telemetry Dashboard plugin loaded. Dashboard: {DashboardUrl}");
+                Log($"Diagnostic log: {DiagnosticLog.FilePath}");
             }
             catch (Exception ex)
             {
                 _cancellation = null;
                 _server = null;
                 _workers = [];
-                Log($"Plugin failed to load: {ex.Message}");
+                Log($"Plugin failed to load: {ex}");
             }
         }
     }
@@ -63,22 +66,6 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2, IPluginApplicationC
         // FanControl calls this on its own 1 Hz update path. All USB, IPC and
         // HTTP work deliberately runs on background workers so this never blocks
         // fan control processing.
-    }
-
-    public void ShowMainWindow()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = DashboardUrl,
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            Log($"Could not open the dashboard: {ex.Message}");
-        }
     }
 
     public void Close()
@@ -114,7 +101,7 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2, IPluginApplicationC
             foreach (var error in ex.Flatten().InnerExceptions
                          .Where(error => error is not OperationCanceledException))
             {
-                Log($"Worker stopped with an error: {error.Message}");
+                Log($"Worker stopped with an error: {error}");
             }
         }
         finally
@@ -125,6 +112,8 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2, IPluginApplicationC
 
     private void Log(string message)
     {
+        DiagnosticLog.Write(message);
+
         try
         {
             logger.Log($"[PC Telemetry Dashboard] {message}");
@@ -132,6 +121,25 @@ public sealed class Plugin(IPluginLogger logger) : IPlugin2, IPluginApplicationC
         catch
         {
             // Logging must never propagate into FanControl's plugin lifecycle.
+        }
+    }
+
+    private async Task RunWorkerAsync(
+        string workerName,
+        Func<Task> worker,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await worker().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal plugin shutdown.
+        }
+        catch (Exception ex)
+        {
+            Log($"The {workerName} worker stopped unexpectedly: {ex}");
         }
     }
 }
