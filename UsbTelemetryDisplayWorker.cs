@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.ComponentModel;
 using HidSharp;
 
 public sealed record UsbDisplayStatus(
@@ -130,7 +131,17 @@ public sealed class UsbTelemetryDisplayWorker(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "USB telemetry display disconnected or could not be opened.");
+                var expectedDisconnect = IsDeviceDisconnected(ex);
+                if (expectedDisconnect)
+                {
+                    logger.LogInformation(
+                        "USB telemetry display disconnected. Waiting for it to reconnect.");
+                }
+                else
+                {
+                    logger.LogWarning(ex, "USB telemetry display could not be opened or written to.");
+                }
+
                 status.Set(new UsbDisplayStatus(
                     false,
                     device is null ? null : SafeProductName(device),
@@ -139,7 +150,9 @@ public sealed class UsbTelemetryDisplayWorker(
                     _sequence,
                     0,
                     null,
-                    ex.Message));
+                    expectedDisconnect
+                        ? "PC Telemetry Display is not connected."
+                        : ex.Message));
 
                 try
                 {
@@ -155,6 +168,22 @@ public sealed class UsbTelemetryDisplayWorker(
                 stream?.Dispose();
             }
         }
+    }
+
+    private static bool IsDeviceDisconnected(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            // ERROR_DEVICE_NOT_CONNECTED, returned by Windows when a HID device
+            // is unplugged while an overlapped write is in progress.
+            if (current is Win32Exception { NativeErrorCode: 1167 })
+            {
+                return true;
+            }
+        }
+
+        return exception is IOException
+            && exception.Message.Contains("device is not connected", StringComparison.OrdinalIgnoreCase);
     }
 
     private static HidDevice? FindDisplay()

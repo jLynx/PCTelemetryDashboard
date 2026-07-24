@@ -155,12 +155,12 @@ struct Card {
   uint16_t accent;
 };
 
-constexpr Card CpuTempCard{10, 48, 146, 82, "CPU TEMP", "C", Colors::Cyan};
-constexpr Card GpuTempCard{167, 48, 146, 82, "GPU TEMP", "C", Colors::Cyan};
-constexpr Card CpuPowerCard{324, 48, 146, 82, "CPU POWER", "W", Colors::Cyan};
-constexpr Card CpuLoadCard{10, 141, 146, 78, "CPU LOAD", "%", Colors::Lime};
+constexpr Card CpuTempCard{10, 48, 146, 82, "CPU TEMP", "C", Colors::Orange};
+constexpr Card GpuTempCard{10, 141, 146, 78, "GPU TEMP", "C", Colors::Lime};
+constexpr Card CpuLoadCard{167, 48, 146, 82, "CPU LOAD", "%", Colors::Orange};
 constexpr Card GpuLoadCard{167, 141, 146, 78, "GPU LOAD", "%", Colors::Lime};
-constexpr Card GpuPowerCard{324, 141, 146, 78, "GPU POWER", "W", Colors::Orange};
+constexpr Card CpuPowerCard{324, 48, 146, 82, "CPU POWER", "W", Colors::Orange};
+constexpr Card GpuPowerCard{324, 141, 146, 78, "GPU POWER", "W", Colors::Lime};
 
 void drawText(const char* text, int16_t x, int16_t y, uint8_t size,
               uint16_t color) {
@@ -180,7 +180,7 @@ void drawStaticUi() {
   gfx->fillScreen(Colors::Background);
   gfx->fillRect(0, 0, DisplayWidth, 38, Colors::Header);
   drawText("PC TELEMETRY", 12, 8, 2, Colors::Text);
-  drawText("USB DISPLAY", 353, 13, 1, Colors::Muted);
+  drawText("USB DISPLAY", 307, 13, 1, Colors::Muted);
 
   drawCardFrame(CpuTempCard);
   drawCardFrame(GpuTempCard);
@@ -190,7 +190,7 @@ void drawStaticUi() {
   drawCardFrame(GpuPowerCard);
 
   gfx->fillRoundRect(10, 230, 460, 80, 7, Colors::Card);
-  gfx->drawRoundRect(10, 230, 460, 80, 7, Colors::Grid);
+  gfx->drawRoundRect(10, 230, 460, 80, 7, Colors::Cyan);
   drawText("FAN OUTPUTS", 19, 239, 1, Colors::Text);
   drawText("RAD", 35, 255, 1, Colors::Muted);
   drawText("IO", 157, 255, 1, Colors::Muted);
@@ -276,7 +276,7 @@ void drawCardValue(const Card& card, const char* value, bool valid,
   drawSparkline(card.x + 8, card.y + card.h - 30, card.w - 16, 23, history);
   drawText(valid ? value : "--", card.x + 9, card.y + 35, 3,
            valid ? Colors::Text : Colors::Muted);
-  drawText(card.unit, card.x + card.w - 21, card.y + 54, 1, Colors::Muted);
+  drawText(card.unit, card.x + card.w - 21, card.y + 43, 2, card.accent);
 }
 
 void drawFanValue(int16_t x, uint16_t valueX10, bool valid,
@@ -385,14 +385,6 @@ void setup() {
   gfx->begin(10000000);
   gfx->setTextWrap(false);
 
-  // Power-on diagnostic: this must appear without USB telemetry. If the panel
-  // remains white, initialization or physical bus wiring is still incorrect.
-  gfx->fillScreen(RED);
-  delay(350);
-  gfx->fillScreen(GREEN);
-  delay(350);
-  gfx->fillScreen(BLUE);
-  delay(350);
   drawStaticUi();
   drawConnection(false);
 
