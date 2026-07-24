@@ -154,7 +154,6 @@ uint32_t lastFrameMs = 0;
 uint32_t lastStatusReportMs = 0;
 uint32_t offlineSinceMs = 0;
 bool displayBlanked = false;
-bool needsFullRedraw = false;
 uint32_t recoveryBootAtMs = 0;
 uint32_t usbUnmountedAtMs = 0;
 bool usbWasMounted = false;
@@ -480,11 +479,11 @@ void setup() {
 
   if (displayRecoveryBoot) {
     current = retainedReport;
-    // The retained panel framebuffer may have been blanked before USB
-    // recovery. Treat it as requiring one complete redraw when the first fresh
-    // telemetry report arrives; incremental card updates alone cannot restore
-    // static labels, borders, and backgrounds.
-    needsFullRedraw = true;
+    // The panel may have already been painted black before USB recovery. Build
+    // the complete retained dashboard before showing OFFLINE so the recovery
+    // boot never leaves only the top-right connection badge visible.
+    drawStaticUi();
+    drawTelemetry();
   } else {
     drawStaticUi();
   }
@@ -532,9 +531,8 @@ void loop() {
   if (online != wasOnline) {
     wasOnline = online;
     if (online) {
-      if (displayBlanked || needsFullRedraw) {
+      if (displayBlanked) {
         displayBlanked = false;
-        needsFullRedraw = false;
         drawStaticUi();
         drawConnection(true);
         drawTelemetry();
